@@ -1,0 +1,18 @@
+[package]
+name = "nginphy"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+readme = "README.md"
+
+[dependencies]
+nalgebra = "0.33"
+# plotters = "0.3"
+
+[features]
+default = []
+parallel = ["rayon"]
+
+[dependencies.rayon]
+version = "1.10"
+optional = true
