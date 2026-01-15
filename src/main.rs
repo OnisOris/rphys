@@ -23,7 +23,7 @@ fn main() {
     println!("t = {:.3} s", p.time());
     println!("state = [x,y,z,vx,vy,vz] = {:?}", p.state());
 
-    // Если нужна траектория — вот как взять:
+    // Если нужна траектория, вот как взять:
     let traj = p.trajectory();
     println!("trajectory len = {}", traj.len());
     println!("last point (x,y,z,vx,vy,vz,t) = {:?}", traj.last().unwrap());

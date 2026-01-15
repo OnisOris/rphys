@@ -9,14 +9,14 @@ pub struct Point {
     drag_coefficient: f64,
     state: SVector<f64, 6>,
     time: f64,
-    /// Если true — пишем траекторию: [x, y, z, vx, vy, vz, t]
+    /// Если true, пишем траекторию: [x, y, z, vx, vy, vz, t]
     trajectory_write: bool,
     trajectory: Vec<[f64; 7]>,
 }
 
 impl Point {
     /// Создание точки.
-    /// `position` — [x, y, z, vx, vy, vz]
+    /// position: [x, y, z, vx, vy, vz]
     pub fn new(
         mass: f64,
         position: [f64; 6],
@@ -43,9 +43,9 @@ impl Point {
     }
 
     /// Один шаг интегрирования (RK4).
-    /// `force` — внешняя сила [Fx, Fy, Fz], `dt` — шаг времени.
+    /// force: внешняя сила [Fx, Fy, Fz], dt: шаг времени.
     pub fn step(&mut self, force: Vector3<f64>, dt: f64) {
-        // Сопротивление считаем по текущей скорости (как в вашем коде — b константно в пределах шага)
+        // Сопротивление считаем по текущей скорости (как в вашем коде, b константно в пределах шага)
         let v = self.velocity();
         let drag_force = -self.drag_coefficient * v;
         let total_force = force + drag_force;
@@ -71,7 +71,7 @@ impl Point {
     }
 
     /// Получить траекторию как срез (если запись включена).
-    /// Возвращаем `&[[f64; 7]]`, чтобы не раскрывать тип контейнера.
+    /// Возвращаем &[[f64; 7]], чтобы не раскрывать тип контейнера.
     pub fn trajectory(&self) -> &[[f64; 7]] {
         &self.trajectory
     }

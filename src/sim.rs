@@ -73,7 +73,7 @@ pub struct Simulator {
     drag: Vec<f64>,               // коэффициенты сопротивления
     groups: Vec<usize>,           // группа для каждого тела
     forces: Vec<Vector3<f64>>,    // внешние силы (на объект), по умолчанию нули
-    traj: Vec<Option<Vec<[f64; 7]>>>, // траектории по объектам (Option — чтобы не аллоцировать лишнее)
+    traj: Vec<Option<Vec<[f64; 7]>>>, // траектории по объектам (Option, чтобы не аллоцировать лишнее)
     time: f64,                    // глобальное модельное время
     dt: f64,                      // шаг по времени по умолчанию
 
@@ -173,7 +173,7 @@ impl Simulator {
         out
     }
 
-    /// Назначить внешнюю силу для объекта `i`
+    /// Назначить внешнюю силу для объекта i
     pub fn set_force(&mut self, i: usize, f: Vector3<f64>) {
         self.forces[i] = f;
     }
@@ -185,7 +185,7 @@ impl Simulator {
         }
     }
 
-    /// Один шаг RK4, используя сохранённые в `self.forces` (константные во времени на шаг) внешние силы.
+    /// Один шаг RK4, используя сохранённые в self.forces (константные во времени на шаг) внешние силы.
     pub fn step(&mut self) {
         let n = self.len();
         if n == 0 { return; }
@@ -249,7 +249,7 @@ impl Simulator {
         }
     }
 
-    /// Один шаг RK4 с внешним полем сил `field`.
+    /// Один шаг RK4 с внешним полем сил field.
     pub fn step_with_field<F: ForceField>(&mut self, field: &F) {
         let n = self.len();
         if n == 0 { return; }
@@ -313,7 +313,7 @@ impl Simulator {
         }
     }
 
-    /// Параллельный шаг RK4 (только если включена фича `parallel`).
+    /// Параллельный шаг RK4 (только если включена фича parallel).
     #[cfg(feature = "parallel")]
     pub fn step_par_with_field<F: ForceField>(&mut self, field: &F) {
         use rayon::prelude::*;
