@@ -2,6 +2,9 @@ use nalgebra::{SVector, Vector3};
 pub mod sim;
 pub use sim::{BodyConfig, BodySnapshot, ForceField, Simulator};
 
+#[cfg(target_arch = "wasm32")]
+pub mod wasm;
+
 /// Материальная точка со state = [x, y, z, vx, vy, vz]
 #[derive(Debug, Clone)]
 pub struct Point {

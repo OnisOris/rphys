@@ -148,6 +148,9 @@ impl Simulator {
         out
     }
 
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn positions(&self) -> &[Vector3<f64>] { &self.x }
+
     /// Ссылка на траекторию i-го тела, если запись включена
     pub fn trajectory_of(&self, i: usize) -> Option<&[[f64; 7]]> {
         self.traj[i].as_deref()
