@@ -14,3 +14,8 @@ python3 -m http.server --directory www
 ```
 
 Open http://localhost:8000 in the browser.
+
+Rust dev server alternative:
+```
+cargo run --bin devserver -- --dir www --port 8000
+```

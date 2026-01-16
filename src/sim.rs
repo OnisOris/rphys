@@ -151,6 +151,15 @@ impl Simulator {
     #[cfg(target_arch = "wasm32")]
     pub(crate) fn positions(&self) -> &[Vector3<f64>] { &self.x }
 
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn velocities(&self) -> &[Vector3<f64>] { &self.v }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn set_position(&mut self, i: usize, pos: Vector3<f64>) { self.x[i] = pos; }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn set_velocity(&mut self, i: usize, vel: Vector3<f64>) { self.v[i] = vel; }
+
     /// Ссылка на траекторию i-го тела, если запись включена
     pub fn trajectory_of(&self, i: usize) -> Option<&[[f64; 7]]> {
         self.traj[i].as_deref()
