@@ -6,7 +6,7 @@ use wasm_bindgen::prelude::*;
 
 use crate::{BodyConfig, Simulator};
 
-const DEMO_COUNT: usize = 4;
+const DEMO_COUNT: usize = 2000;
 
 const DEMO_DT: f64 = 1.0 / 60.0;
 const DEMO_RADIUS: f64 = 14.5;
@@ -131,7 +131,11 @@ impl WasmSim {
     fn flatten_to_plane(&mut self) {
         let positions = self.sim.positions().to_vec();
         let velocities = self.sim.velocities().to_vec();
-        for (i, (mut p, mut v)) in positions.into_iter().zip(velocities.into_iter()).enumerate() {
+        for (i, (mut p, mut v)) in positions
+            .into_iter()
+            .zip(velocities.into_iter())
+            .enumerate()
+        {
             p.z = 0.0;
             v.z = 0.0;
             self.sim.set_position(i, p);

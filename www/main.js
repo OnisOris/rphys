@@ -32,6 +32,7 @@ const orbitMinRadius = 4.0;
 const orbitMaxRadius = 40.0;
 const homeOrbit = orbit.clone();
 const homeTarget = orbitTarget.clone();
+const homeUp = new THREE.Vector3(0, 1, 0);
 const orbitOffset = new THREE.Vector3();
 const panLast = new THREE.Vector2();
 const panDir = new THREE.Vector3();
@@ -54,6 +55,7 @@ function clamp(value, min, max) {
 function resetCamera() {
   orbit.copy(homeOrbit);
   orbitTarget.copy(homeTarget);
+  camera.up.copy(homeUp);
   updateCameraFromOrbit();
 }
 
@@ -171,6 +173,10 @@ gizmoScene.add(gizmoRoot);
 const gizmoViewportSize = new THREE.Vector2();
 const gizmoSize = 96;
 const gizmoMargin = 14;
+const gizmoPointer = new THREE.Vector2();
+const gizmoRaycaster = new THREE.Raycaster();
+const gizmoAxis = new THREE.Vector3();
+const gizmoOffset = new THREE.Vector3();
 
 function makeAxisLabel(text, color) {
   const canvas = document.createElement("canvas");
@@ -212,6 +218,63 @@ labelX.position.set(0.95, 0.0, 0.0);
 labelY.position.set(0.0, 0.95, 0.0);
 labelZ.position.set(0.0, 0.0, 0.95);
 gizmoRoot.add(labelX, labelY, labelZ);
+
+function getGizmoPointer(event) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) return null;
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+  const left = rect.width - gizmoSize - gizmoMargin;
+  const top = gizmoMargin;
+  if (x < left || x > left + gizmoSize || y < top || y > top + gizmoSize) {
+    return null;
+  }
+  const localX = x - left;
+  const localY = y - top;
+  gizmoPointer.set(
+    (localX / gizmoSize) * 2 - 1,
+    -(localY / gizmoSize) * 2 + 1
+  );
+  return gizmoPointer;
+}
+
+function axisFromNormal(normal) {
+  const ax = Math.abs(normal.x);
+  const ay = Math.abs(normal.y);
+  const az = Math.abs(normal.z);
+  if (ax >= ay && ax >= az) {
+    gizmoAxis.set(Math.sign(normal.x) || 1, 0, 0);
+  } else if (ay >= ax && ay >= az) {
+    gizmoAxis.set(0, Math.sign(normal.y) || 1, 0);
+  } else {
+    gizmoAxis.set(0, 0, Math.sign(normal.z) || 1);
+  }
+  return gizmoAxis;
+}
+
+function alignCameraToAxis(axis) {
+  if (Math.abs(axis.y) > 0.5) {
+    camera.up.set(0, 0, axis.y > 0 ? 1 : -1);
+  } else {
+    camera.up.copy(homeUp);
+  }
+  gizmoOffset.copy(axis).normalize().multiplyScalar(orbit.radius);
+  orbit.setFromVector3(gizmoOffset);
+  updateCameraFromOrbit();
+}
+
+function onGizmoDoubleClick(event) {
+  if (event.button !== 0) return;
+  if (!isInViewport(event)) return;
+  const pointer = getGizmoPointer(event);
+  if (!pointer) return;
+  event.preventDefault();
+  gizmoRaycaster.setFromCamera(pointer, gizmoCamera);
+  const hits = gizmoRaycaster.intersectObject(gizmoCube, false);
+  if (hits.length === 0 || !hits[0].face) return;
+  const axis = axisFromNormal(hits[0].face.normal);
+  alignCameraToAxis(axis);
+}
 
 const sim = WasmSim.new_demo();
 const count = sim.len();
@@ -433,6 +496,7 @@ function endOrbit(event, isPointer) {
 
 function onPointerDown(event) {
   if (dragInput || panInput || orbitInput) return;
+  if (getGizmoPointer(event)) return;
   if (event.button === 0) {
     dragInput = "pointer";
     startDrag(event, true);
@@ -473,6 +537,7 @@ function onPointerUp(event) {
 
 function onMouseDown(event) {
   if (dragInput || panInput || orbitInput) return;
+  if (getGizmoPointer(event)) return;
   if (event.button === 0) {
     dragInput = "mouse";
     startDrag(event, false);
@@ -516,6 +581,7 @@ renderer.domElement.addEventListener("pointermove", onPointerMove);
 renderer.domElement.addEventListener("pointerup", onPointerUp);
 renderer.domElement.addEventListener("pointercancel", onPointerUp);
 renderer.domElement.addEventListener("mousedown", onMouseDown);
+renderer.domElement.addEventListener("dblclick", onGizmoDoubleClick);
 renderer.domElement.addEventListener("mousemove", onMouseMove);
 renderer.domElement.addEventListener("mouseup", onMouseUp);
 window.addEventListener("pointermove", onPointerMove);
