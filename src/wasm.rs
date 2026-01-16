@@ -124,12 +124,32 @@ fn demo_configs(count: usize) -> Vec<BodyConfig> {
 pub struct WasmSim {
     sim: Simulator,
     flock: FlockParams,
+    plane_2d: bool,
 }
 
 impl WasmSim {
-    fn apply_flock_forces(&mut self) {
+    fn flatten_to_plane(&mut self) {
         let positions = self.sim.positions().to_vec();
         let velocities = self.sim.velocities().to_vec();
+        for (i, (mut p, mut v)) in positions.into_iter().zip(velocities.into_iter()).enumerate() {
+            p.z = 0.0;
+            v.z = 0.0;
+            self.sim.set_position(i, p);
+            self.sim.set_velocity(i, v);
+        }
+    }
+
+    fn apply_flock_forces(&mut self) {
+        let mut positions = self.sim.positions().to_vec();
+        let mut velocities = self.sim.velocities().to_vec();
+        if self.plane_2d {
+            for p in positions.iter_mut() {
+                p.z = 0.0;
+            }
+            for v in velocities.iter_mut() {
+                v.z = 0.0;
+            }
+        }
         let n = positions.len();
         if n == 0 {
             return;
@@ -198,6 +218,9 @@ impl WasmSim {
                 force = force / fmag * self.flock.max_force;
             }
 
+            if self.plane_2d {
+                force.z = 0.0;
+            }
             forces.push(force);
         }
 
@@ -216,6 +239,7 @@ impl WasmSim {
         Ok(WasmSim {
             sim: Simulator::new(&configs, dt),
             flock: FlockParams::default(),
+            plane_2d: false,
         })
     }
 
@@ -224,6 +248,7 @@ impl WasmSim {
         WasmSim {
             sim: Simulator::new(&configs, DEMO_DT),
             flock: FlockParams::default(),
+            plane_2d: false,
         }
     }
 
@@ -236,8 +261,21 @@ impl WasmSim {
     }
 
     pub fn tick(&mut self) {
+        if self.plane_2d {
+            self.flatten_to_plane();
+        }
         self.apply_flock_forces();
         self.sim.step();
+        if self.plane_2d {
+            self.flatten_to_plane();
+        }
+    }
+
+    pub fn set_plane_2d(&mut self, enabled: bool) {
+        self.plane_2d = enabled;
+        if self.plane_2d {
+            self.flatten_to_plane();
+        }
     }
 
     pub fn set_force(&mut self, index: usize, fx: f64, fy: f64, fz: f64) {

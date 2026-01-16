@@ -139,6 +139,8 @@ bindToggle("toggle-axis-x", axisX, true);
 bindToggle("toggle-axis-y", axisY, true);
 bindToggle("toggle-axis-z", axisZ, true);
 
+const plane2dToggle = document.getElementById("toggle-plane-2d");
+
 const gizmoScene = new THREE.Scene();
 gizmoScene.background = new THREE.Color(0x11161b);
 const gizmoCamera = new THREE.PerspectiveCamera(35, 1, 0.1, 10);
@@ -213,6 +215,12 @@ gizmoRoot.add(labelX, labelY, labelZ);
 
 const sim = WasmSim.new_demo();
 const count = sim.len();
+
+if (plane2dToggle) {
+  plane2dToggle.addEventListener("change", () => {
+    sim.set_plane_2d(plane2dToggle.checked);
+  });
+}
 
 const geometry = new THREE.SphereGeometry(0.12, 16, 16);
 const material = new THREE.MeshStandardMaterial({
