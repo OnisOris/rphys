@@ -123,17 +123,32 @@
         align-items: center;
         gap: 10px;
       }
-      #home-btn {
-        background: linear-gradient(135deg, rgba(106, 209, 255, 0.18), rgba(88, 208, 122, 0.2));
-        border: 1px solid rgba(106, 209, 255, 0.4);
+      .action-btn {
+        font: inherit;
+        background: rgba(16, 25, 36, 0.7);
+        border: 1px solid var(--border);
         color: var(--text);
         font-weight: 500;
         letter-spacing: 0.02em;
         padding: 6px 14px;
         border-radius: 10px;
+        transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
       }
-      #home-btn:hover {
+      .action-btn:hover {
+        border-color: rgba(106, 209, 255, 0.5);
+        box-shadow: inset 0 0 0 1px rgba(106, 209, 255, 0.2);
+      }
+      .action-btn--primary {
+        background: linear-gradient(135deg, rgba(106, 209, 255, 0.18), rgba(88, 208, 122, 0.2));
+        border: 1px solid rgba(106, 209, 255, 0.4);
+      }
+      .action-btn--primary:hover {
         border-color: rgba(106, 209, 255, 0.75);
+      }
+      #sim-toggle-btn[data-state="paused"] {
+        background: linear-gradient(135deg, rgba(88, 208, 122, 0.22), rgba(106, 209, 255, 0.15));
+        border-color: rgba(88, 208, 122, 0.55);
+        box-shadow: inset 0 0 0 1px rgba(88, 208, 122, 0.2);
       }
       .toggle-group {
         display: flex;
@@ -270,7 +285,9 @@
         </div>
         <div class="spacer"></div>
         <div class="actions">
-          <button id="home-btn" type="button">Home</button>
+          <button id="sim-toggle-btn" class="action-btn" type="button">Pause</button>
+          <button id="sim-restart-btn" class="action-btn" type="button">Restart</button>
+          <button id="home-btn" class="action-btn action-btn--primary" type="button">Home</button>
         </div>
       </header>
       <div id="viewport"></div>

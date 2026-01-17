@@ -5,6 +5,8 @@ await init();
 
 const viewport = document.getElementById("viewport");
 const homeButton = document.getElementById("home-btn");
+const pauseButton = document.getElementById("sim-toggle-btn");
+const restartButton = document.getElementById("sim-restart-btn");
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(window.devicePixelRatio || 1);
@@ -276,8 +278,37 @@ function onGizmoDoubleClick(event) {
   alignCameraToAxis(axis);
 }
 
-const sim = WasmSim.new_demo();
+let sim = WasmSim.new_demo();
 const count = sim.len();
+let paused = false;
+
+function setPaused(next) {
+  paused = next;
+  if (!pauseButton) return;
+  pauseButton.dataset.state = paused ? "paused" : "running";
+  pauseButton.textContent = paused ? "Resume" : "Pause";
+  pauseButton.setAttribute("aria-pressed", paused ? "true" : "false");
+}
+
+function resetSimulation() {
+  sim = WasmSim.new_demo();
+  if (plane2dToggle) {
+    sim.set_plane_2d(plane2dToggle.checked);
+  }
+}
+
+if (pauseButton) {
+  setPaused(false);
+  pauseButton.addEventListener("click", () => {
+    setPaused(!paused);
+  });
+}
+
+if (restartButton) {
+  restartButton.addEventListener("click", () => {
+    resetSimulation();
+  });
+}
 
 if (plane2dToggle) {
   plane2dToggle.addEventListener("change", () => {
@@ -623,7 +654,9 @@ function animate() {
     );
   }
 
-  sim.tick();
+  if (!paused) {
+    sim.tick();
+  }
 
   if (dragging && dragIndex !== null) {
     sim.set_position_and_velocity(
