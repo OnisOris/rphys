@@ -1,10 +1,10 @@
 [package]
-name = "nginphy"
+name = "rphys"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
 readme = "README.md"
-default-run = "devserver"
+# default-run = "devserver"
 
 [lib]
 crate-type = ["rlib", "cdylib"]

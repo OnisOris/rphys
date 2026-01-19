@@ -6,7 +6,7 @@ use wasm_bindgen::prelude::*;
 
 use crate::{BodyConfig, Simulator};
 
-const DEMO_COUNT: usize = 2000;
+const DEMO_COUNT: usize = 20;
 
 const DEMO_DT: f64 = 1.0 / 60.0;
 const DEMO_RADIUS: f64 = 14.5;

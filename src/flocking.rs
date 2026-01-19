@@ -1,4 +1,4 @@
-use nginphy::{BodyConfig, Point, Simulator};
+use rphys::{BodyConfig, Point, Simulator};
 
 pub enum FlockAlgorithm {
     Basic,

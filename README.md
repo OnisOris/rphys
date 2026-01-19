@@ -1,7 +1,18 @@
 # rphys
 Physics engine is written in RUST
 
+## Install wasm
+
+```
+cargo install wasm-pack
+```
+
 ## Browser demo (WASM + JS)
+
+Build rphys:
+```
+cargo build
+```
 
 Build the wasm package:
 ```

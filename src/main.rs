@@ -1,6 +1,5 @@
-use nginphy::{Point, Simulator, BodyConfig};
-use nalgebra::{Vector3};
-
+use nalgebra::Vector3;
+use rphys::{BodyConfig, Point, Simulator};
 
 fn main() {
     // Пример: точка стартует из (0,0,0), скорость (1,0,0).
@@ -32,14 +31,28 @@ fn main() {
     // Демонстрация группового симулятора на 2 телах
     let mut sim = Simulator::new(
         &[
-            BodyConfig { mass: 1.0, state: [0.0, 0.0, 0.0, 1.0, 0.0, 0.0], drag_coefficient: 0.0, trajectory_write: true, group: 0 },
-            BodyConfig { mass: 2.0, state: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0], drag_coefficient: 0.0, trajectory_write: false, group: 0 },
+            BodyConfig {
+                mass: 1.0,
+                state: [0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+                drag_coefficient: 0.0,
+                trajectory_write: true,
+                group: 0,
+            },
+            BodyConfig {
+                mass: 2.0,
+                state: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                drag_coefficient: 0.0,
+                trajectory_write: false,
+                group: 0,
+            },
         ],
         0.01,
     );
     sim.set_force(0, Vector3::new(-10.0, 0.0, 0.0));
     sim.set_force(1, Vector3::new(0.0, 0.0, 0.0));
-    for _ in 0..30 { sim.step(); }
+    for _ in 0..30 {
+        sim.step();
+    }
     println!("sim t = {:.3} s", sim.time());
     let states = sim.state_matrix();
     println!("states (Nx6) = {:?}", states);
