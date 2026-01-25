@@ -1,4 +1,7 @@
 use nalgebra::{SVector, Vector3};
+pub mod algorithms;
+pub mod engine;
+pub mod models;
 pub mod sim;
 pub use sim::{BodyConfig, BodySnapshot, ForceField, Simulator};
 

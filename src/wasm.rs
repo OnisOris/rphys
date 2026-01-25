@@ -1,297 +1,136 @@
 #![cfg(target_arch = "wasm32")]
 
+use crate::engine::{
+    algorithm_catalog, model_catalog, AlgorithmInfo, Engine, ModelInfo, ALGO_FLOCKING, MODEL_RING,
+};
 use nalgebra::Vector3;
-use std::f64::consts::PI;
+use serde::Deserialize;
 use wasm_bindgen::prelude::*;
 
-use crate::{BodyConfig, Simulator};
-
-const DEMO_COUNT: usize = 20;
-
-const DEMO_DT: f64 = 1.0 / 60.0;
-const DEMO_RADIUS: f64 = 14.5;
-const DEMO_Z_STEP: f64 = 0.35;
-const DEMO_Z_OFFSET: f64 = 1.225;
-const DEMO_DRAG: f64 = 0.08;
-
-const FLOCK_NEIGHBOR_RADIUS: f64 = 2.6;
-const FLOCK_SEPARATION_RADIUS: f64 = 0.9;
-const FLOCK_COHESION_WEIGHT: f64 = 0.45;
-const FLOCK_ALIGNMENT_WEIGHT: f64 = 0.65;
-const FLOCK_SEPARATION_WEIGHT: f64 = 10.35;
-const FLOCK_BOUNDARY_RADIUS: f64 = 6.0;
-const FLOCK_BOUNDARY_WEIGHT: f64 = 0.8;
-const FLOCK_MAX_SPEED: f64 = 2.4;
-const FLOCK_MAX_FORCE: f64 = 1.6;
-const FLOCK_SPEED_LIMIT: f64 = 2.;
-
-struct FlockParams {
-    neighbor_radius: f64,
-    separation_radius: f64,
-    cohesion_weight: f64,
-    alignment_weight: f64,
-    separation_weight: f64,
-    boundary_radius: f64,
-    boundary_weight: f64,
-    max_speed: f64,
-    max_force: f64,
-    speed_limit: f64,
+#[wasm_bindgen]
+pub fn available_models() -> js_sys::Array {
+    let out = js_sys::Array::new();
+    for info in model_catalog() {
+        out.push(&model_info_to_js(info));
+    }
+    out
 }
 
-impl Default for FlockParams {
-    fn default() -> Self {
-        Self {
-            neighbor_radius: FLOCK_NEIGHBOR_RADIUS,
-            separation_radius: FLOCK_SEPARATION_RADIUS,
-            cohesion_weight: FLOCK_COHESION_WEIGHT,
-            alignment_weight: FLOCK_ALIGNMENT_WEIGHT,
-            separation_weight: FLOCK_SEPARATION_WEIGHT,
-            boundary_radius: FLOCK_BOUNDARY_RADIUS,
-            boundary_weight: FLOCK_BOUNDARY_WEIGHT,
-            max_speed: FLOCK_MAX_SPEED,
-            max_force: FLOCK_MAX_FORCE,
-            speed_limit: FLOCK_SPEED_LIMIT,
-        }
+#[wasm_bindgen]
+pub fn available_algorithms() -> js_sys::Array {
+    let out = js_sys::Array::new();
+    for info in algorithm_catalog() {
+        out.push(&algorithm_info_to_js(info));
     }
+    out
 }
 
-fn configs_from_states(states: &[f64]) -> Result<Vec<BodyConfig>, JsValue> {
-    if states.len() % 6 != 0 {
-        return Err(JsValue::from_str("states length must be a multiple of 6"));
+#[wasm_bindgen]
+pub fn algorithms_for_model(model_id: &str) -> js_sys::Array {
+    let out = js_sys::Array::new();
+    for info in algorithm_catalog().iter().filter(|a| a.compatible_models.contains(&model_id)) {
+        out.push(&algorithm_info_to_js(info));
     }
-
-    let n = states.len() / 6;
-    let mut configs = Vec::with_capacity(n);
-    for i in 0..n {
-        let base = i * 6;
-        configs.push(BodyConfig {
-            mass: 1.0,
-            state: [
-                states[base],
-                states[base + 1],
-                states[base + 2],
-                states[base + 3],
-                states[base + 4],
-                states[base + 5],
-            ],
-            drag_coefficient: 0.0,
-            trajectory_write: false,
-            group: 0,
-        });
-    }
-
-    Ok(configs)
+    out
 }
 
-fn demo_configs(count: usize) -> Vec<BodyConfig> {
-    let mut configs = Vec::with_capacity(count);
-    if count == 0 {
-        return configs;
+fn model_info_to_js(info: &ModelInfo) -> JsValue {
+    let obj = js_sys::Object::new();
+    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("id"), &JsValue::from_str(info.id));
+    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("name"), &JsValue::from_str(info.name));
+    let _ = js_sys::Reflect::set(
+        &obj,
+        &JsValue::from_str("description"),
+        &JsValue::from_str(info.description),
+    );
+    let _ = js_sys::Reflect::set(
+        &obj,
+        &JsValue::from_str("defaultAlgorithm"),
+        &JsValue::from_str(info.default_algorithm),
+    );
+    JsValue::from(obj)
+}
+
+fn algorithm_info_to_js(info: &AlgorithmInfo) -> JsValue {
+    let obj = js_sys::Object::new();
+    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("id"), &JsValue::from_str(info.id));
+    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("name"), &JsValue::from_str(info.name));
+    let _ = js_sys::Reflect::set(
+        &obj,
+        &JsValue::from_str("description"),
+        &JsValue::from_str(info.description),
+    );
+    let compatible = js_sys::Array::new();
+    for m in info.compatible_models {
+        compatible.push(&JsValue::from_str(m));
     }
-
-    let count_f = count as f64;
-    for i in 0..count {
-        let i_f = i as f64;
-        let angle = (i_f / count_f) * 2.0 * PI;
-        let wobble = 0.6 + 0.4 * (i_f * 0.7).sin();
-        let r = DEMO_RADIUS * wobble;
-        let x = r * angle.cos();
-        let y = r * angle.sin();
-        let z = (i % 8) as f64 * DEMO_Z_STEP - DEMO_Z_OFFSET;
-        let tangent = Vector3::new(-y, x, 0.0);
-        let tangent = if tangent.norm_squared() > 1.0e-12 {
-            tangent.normalize()
-        } else {
-            Vector3::new(1.0, 0.0, 0.0)
-        };
-        let speed = 1.0 + 0.4 * (i_f * 1.3).sin();
-        let vz = 0.3 * (i_f * 0.9).cos();
-        let vel = tangent * speed + Vector3::new(0.0, 0.0, vz);
-
-        configs.push(BodyConfig {
-            mass: 1.0,
-            state: [x, y, z, vel.x, vel.y, vel.z],
-            drag_coefficient: DEMO_DRAG,
-            trajectory_write: false,
-            group: 0,
-        });
-    }
-
-    configs
+    let _ = js_sys::Reflect::set(&obj, &JsValue::from_str("compatible"), &compatible);
+    JsValue::from(obj)
 }
 
 #[wasm_bindgen]
 pub struct WasmSim {
-    sim: Simulator,
-    flock: FlockParams,
-    plane_2d: bool,
-}
-
-impl WasmSim {
-    fn flatten_to_plane(&mut self) {
-        let positions = self.sim.positions().to_vec();
-        let velocities = self.sim.velocities().to_vec();
-        for (i, (mut p, mut v)) in positions
-            .into_iter()
-            .zip(velocities.into_iter())
-            .enumerate()
-        {
-            p.z = 0.0;
-            v.z = 0.0;
-            self.sim.set_position(i, p);
-            self.sim.set_velocity(i, v);
-        }
-    }
-
-    fn apply_flock_forces(&mut self) {
-        let mut positions = self.sim.positions().to_vec();
-        let mut velocities = self.sim.velocities().to_vec();
-        if self.plane_2d {
-            for p in positions.iter_mut() {
-                p.z = 0.0;
-            }
-            for v in velocities.iter_mut() {
-                v.z = 0.0;
-            }
-        }
-        let n = positions.len();
-        if n == 0 {
-            return;
-        }
-
-        let neighbor_r2 = self.flock.neighbor_radius * self.flock.neighbor_radius;
-        let separation_r2 = self.flock.separation_radius * self.flock.separation_radius;
-        let mut forces = Vec::with_capacity(n);
-
-        for i in 0..n {
-            let pos_i = positions[i];
-            let vel_i = velocities[i];
-            let mut cohesion_sum = Vector3::new(0.0, 0.0, 0.0);
-            let mut alignment_sum = Vector3::new(0.0, 0.0, 0.0);
-            let mut separation_sum = Vector3::new(0.0, 0.0, 0.0);
-            let mut neighbors = 0usize;
-            let mut close = 0usize;
-
-            for j in 0..n {
-                if i == j {
-                    continue;
-                }
-                let diff = pos_i - positions[j];
-                let dist2 = diff.norm_squared();
-                if dist2 < neighbor_r2 {
-                    cohesion_sum += positions[j];
-                    alignment_sum += velocities[j];
-                    neighbors += 1;
-                }
-                if dist2 < separation_r2 && dist2 > 1.0e-12 {
-                    let dist = dist2.sqrt();
-                    separation_sum += diff / dist;
-                    close += 1;
-                }
-            }
-
-            let mut force = Vector3::new(0.0, 0.0, 0.0);
-
-            if neighbors > 0 {
-                let inv = 1.0 / neighbors as f64;
-                let avg_pos = cohesion_sum * inv;
-                let avg_vel = alignment_sum * inv;
-                force += (avg_pos - pos_i) * self.flock.cohesion_weight;
-                force += (avg_vel - vel_i) * self.flock.alignment_weight;
-            }
-
-            if close > 0 {
-                let inv = 1.0 / close as f64;
-                force += separation_sum * inv * self.flock.separation_weight;
-            }
-
-            let dist = pos_i.norm();
-            if dist > self.flock.boundary_radius && dist > 0.0 {
-                let dir = pos_i / dist;
-                force += -dir * (dist - self.flock.boundary_radius) * self.flock.boundary_weight;
-            }
-
-            let speed = vel_i.norm();
-            if speed > self.flock.max_speed && speed > 0.0 {
-                let dir = vel_i / speed;
-                force += -dir * (speed - self.flock.max_speed) * self.flock.speed_limit;
-            }
-
-            let fmag = force.norm();
-            if fmag > self.flock.max_force && fmag > 0.0 {
-                force = force / fmag * self.flock.max_force;
-            }
-
-            if self.plane_2d {
-                force.z = 0.0;
-            }
-            forces.push(force);
-        }
-
-        for (i, f) in forces.into_iter().enumerate() {
-            self.sim.set_force(i, f);
-        }
-    }
+    engine: Engine,
 }
 
 #[wasm_bindgen]
 impl WasmSim {
     #[wasm_bindgen(constructor)]
     pub fn new(states: Vec<f64>, dt: f64) -> Result<WasmSim, JsValue> {
-        let configs = configs_from_states(&states)?;
+        let engine = Engine::new_from_states(states, dt, Some(ALGO_FLOCKING))
+            .map_err(|e| JsValue::from_str(&e))?;
+        Ok(WasmSim { engine })
+    }
 
-        Ok(WasmSim {
-            sim: Simulator::new(&configs, dt),
-            flock: FlockParams::default(),
-            plane_2d: false,
-        })
+    #[wasm_bindgen(js_name = "newWithIds")]
+    pub fn new_with_ids(model_id: &str, algorithm_id: &str) -> Result<WasmSim, JsValue> {
+        let engine = Engine::new_builtin(model_id, Some(algorithm_id))
+            .map_err(|e| JsValue::from_str(&e))?;
+        Ok(WasmSim { engine })
     }
 
     pub fn new_demo() -> WasmSim {
-        let configs = demo_configs(DEMO_COUNT);
-        WasmSim {
-            sim: Simulator::new(&configs, DEMO_DT),
-            flock: FlockParams::default(),
-            plane_2d: false,
-        }
+        let engine = Engine::new_builtin(MODEL_RING, Some(ALGO_FLOCKING))
+            .expect("ring-swarm model must exist");
+        WasmSim { engine }
     }
 
-    pub fn len(&self) -> usize {
-        self.sim.len()
+    /// Build simulation from a custom config object:
+    /// {
+    ///   dt?: number,
+    ///   algorithm?: string,
+    ///   plane2d?: bool,
+    ///   agents?: [{ position: [f64;3], velocity: [f64;3], mass?: f64, drag?: f64, group?: usize }],
+    ///   clusters?: [{ count, center:[x,y,z], radius, velocity?:[vx,vy,vz], radialSpeed?: f64, drag?: f64, group?: usize }]
+    /// }
+    #[wasm_bindgen(js_name = "newFromConfig")]
+    pub fn new_from_config(config: JsValue) -> Result<WasmSim, JsValue> {
+        let cfg: CustomConfig = serde_wasm_bindgen::from_value(config)
+            .map_err(|e| JsValue::from_str(&format!("invalid config: {}", e)))?;
+        let (configs, dt, plane_2d, algo) = build_custom_configs(cfg)?;
+        let engine = Engine::new_custom(configs, dt, algo.as_deref(), plane_2d)
+            .map_err(|e| JsValue::from_str(&e))?;
+        Ok(WasmSim { engine })
     }
 
-    pub fn step(&mut self) {
-        self.sim.step();
-    }
+    pub fn len(&self) -> usize { self.engine.len() }
 
-    pub fn tick(&mut self) {
-        if self.plane_2d {
-            self.flatten_to_plane();
-        }
-        self.apply_flock_forces();
-        self.sim.step();
-        if self.plane_2d {
-            self.flatten_to_plane();
-        }
-    }
+    pub fn step(&mut self) { self.engine.step(); }
 
-    pub fn set_plane_2d(&mut self, enabled: bool) {
-        self.plane_2d = enabled;
-        if self.plane_2d {
-            self.flatten_to_plane();
-        }
-    }
+    pub fn tick(&mut self) { self.engine.tick(); }
+
+    pub fn set_plane_2d(&mut self, enabled: bool) { self.engine.set_plane_2d(enabled); }
 
     pub fn set_force(&mut self, index: usize, fx: f64, fy: f64, fz: f64) {
-        self.sim.set_force(index, Vector3::new(fx, fy, fz));
+        self.engine.set_force(index, Vector3::new(fx, fy, fz));
     }
 
     pub fn set_position(&mut self, index: usize, x: f64, y: f64, z: f64) {
-        self.sim.set_position(index, Vector3::new(x, y, z));
+        self.engine.set_position(index, Vector3::new(x, y, z));
     }
 
     pub fn set_velocity(&mut self, index: usize, x: f64, y: f64, z: f64) {
-        self.sim.set_velocity(index, Vector3::new(x, y, z));
+        self.engine.set_velocity(index, Vector3::new(x, y, z));
     }
 
     pub fn set_position_and_velocity(
@@ -304,25 +143,175 @@ impl WasmSim {
         vy: f64,
         vz: f64,
     ) {
-        self.sim.set_position(index, Vector3::new(px, py, pz));
-        self.sim.set_velocity(index, Vector3::new(vx, vy, vz));
+        self.engine.set_position(index, Vector3::new(px, py, pz));
+        self.engine.set_velocity(index, Vector3::new(vx, vy, vz));
     }
 
     pub fn set_uniform_force(&mut self, fx: f64, fy: f64, fz: f64) {
-        let f = Vector3::new(fx, fy, fz);
-        for i in 0..self.sim.len() {
-            self.sim.set_force(i, f);
+        self.engine.set_uniform_force(Vector3::new(fx, fy, fz));
+    }
+
+    pub fn positions(&self) -> Vec<f32> { self.engine.positions_flat() }
+
+    pub fn set_algorithm(&mut self, algorithm_id: &str) -> Result<(), JsValue> {
+        self.engine
+            .set_algorithm(algorithm_id)
+            .map_err(|e| JsValue::from_str(&e))
+    }
+
+    pub fn groups(&self) -> Vec<u32> { self.engine.groups() }
+}
+
+#[derive(Debug, Deserialize)]
+struct CustomConfig {
+    #[serde(default)]
+    dt: Option<f64>,
+    #[serde(default)]
+    algorithm: Option<String>,
+    #[serde(default)]
+    plane2d: Option<bool>,
+    #[serde(default)]
+    agents: Option<Vec<CustomAgent>>,
+    #[serde(default)]
+    clusters: Option<Vec<CustomCluster>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CustomAgent {
+    position: [f64; 3],
+    velocity: [f64; 3],
+    #[serde(default)]
+    mass: Option<f64>,
+    #[serde(default)]
+    drag: Option<f64>,
+    #[serde(default)]
+    group: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CustomCluster {
+    #[serde(default = "default_shape")]
+    shape: String,
+    count: usize,
+    center: [f64; 3],
+    radius: f64,
+    #[serde(default)]
+    velocity: Option<[f64; 3]>,
+    #[serde(default, rename = "radialSpeed")]
+    radial_speed: Option<f64>,
+    #[serde(default)]
+    drag: Option<f64>,
+    #[serde(default)]
+    group: Option<usize>,
+    #[serde(default)]
+    mass: Option<f64>,
+}
+
+fn default_shape() -> String { "sphere".to_string() }
+
+fn build_custom_configs(cfg: CustomConfig) -> Result<(Vec<crate::BodyConfig>, f64, bool, Option<String>), JsValue> {
+    let dt = cfg.dt.unwrap_or(crate::models::particles::DEMO_DT);
+    let plane_2d = cfg.plane2d.unwrap_or(false);
+    let mut out = Vec::new();
+
+    if let Some(agents) = cfg.agents {
+        for a in agents {
+            out.push(crate::BodyConfig {
+                mass: a.mass.unwrap_or(1.0),
+                state: [
+                    a.position[0],
+                    a.position[1],
+                    a.position[2],
+                    a.velocity[0],
+                    a.velocity[1],
+                    a.velocity[2],
+                ],
+                drag_coefficient: a.drag.unwrap_or(0.0),
+                trajectory_write: false,
+                group: a.group.unwrap_or(0),
+            });
         }
     }
 
-    pub fn positions(&self) -> Vec<f32> {
-        let positions = self.sim.positions();
-        let mut out = Vec::with_capacity(positions.len() * 3);
-        for p in positions {
-            out.push(p.x as f32);
-            out.push(p.y as f32);
-            out.push(p.z as f32);
+    if let Some(clusters) = cfg.clusters {
+        for cluster in clusters {
+            let generated = build_cluster(&cluster)?;
+            out.extend(generated);
         }
-        out
     }
+
+    Ok((out, dt, plane_2d, cfg.algorithm))
+}
+
+fn build_cluster(c: &CustomCluster) -> Result<Vec<crate::BodyConfig>, JsValue> {
+    match c.shape.as_str() {
+        "sphere" | "ball" => build_sphere_cluster(c),
+        "circle" | "ring" => build_circle_cluster(c),
+        other => Err(JsValue::from_str(&format!("unknown cluster shape '{}'", other))),
+    }
+}
+
+fn build_sphere_cluster(c: &CustomCluster) -> Result<Vec<crate::BodyConfig>, JsValue> {
+    let count = c.count;
+    if count == 0 {
+        return Ok(Vec::new());
+    }
+    let mut configs = Vec::with_capacity(count);
+    // Fibonacci sphere distribution for deterministic spread.
+    let golden = (1.0 + 5.0_f64.sqrt()) * 0.5;
+    let ga = 2.0 - 1.0 / golden;
+    for i in 0..count {
+        let fi = i as f64 + 0.5;
+        let z = 1.0 - (2.0 * fi) / count as f64;
+        let r = (1.0 - z * z).max(0.0).sqrt();
+        let theta = 2.0 * std::f64::consts::PI * fi * ga;
+        let x = theta.cos() * r;
+        let y = theta.sin() * r;
+        let pos = Vector3::new(x, y, z) * c.radius + Vector3::new(c.center[0], c.center[1], c.center[2]);
+
+        let base_vel = c.velocity.unwrap_or([0.0, 0.0, 0.0]);
+        let mut vel = Vector3::new(base_vel[0], base_vel[1], base_vel[2]);
+        if let Some(radial) = c.radial_speed {
+            let dir = Vector3::new(x, y, z).normalize();
+            vel += dir * radial;
+        }
+
+        configs.push(crate::BodyConfig {
+            mass: c.mass.unwrap_or(1.0),
+            state: [pos.x, pos.y, pos.z, vel.x, vel.y, vel.z],
+            drag_coefficient: c.drag.unwrap_or(0.0),
+            trajectory_write: false,
+            group: c.group.unwrap_or(0),
+        });
+    }
+    Ok(configs)
+}
+
+fn build_circle_cluster(c: &CustomCluster) -> Result<Vec<crate::BodyConfig>, JsValue> {
+    let count = c.count.max(1);
+    let mut configs = Vec::with_capacity(count);
+    for i in 0..count {
+        let angle = (i as f64 / count as f64) * 2.0 * std::f64::consts::PI;
+        let pos = Vector3::new(
+            c.center[0] + c.radius * angle.cos(),
+            c.center[1] + c.radius * angle.sin(),
+            c.center[2],
+        );
+
+        let base_vel = c.velocity.unwrap_or([0.0, 0.0, 0.0]);
+        let mut vel = Vector3::new(base_vel[0], base_vel[1], base_vel[2]);
+        if let Some(radial) = c.radial_speed {
+            let dir = Vector3::new(angle.cos(), angle.sin(), 0.0);
+            vel += dir * radial;
+        }
+
+        configs.push(crate::BodyConfig {
+            mass: c.mass.unwrap_or(1.0),
+            state: [pos.x, pos.y, pos.z, vel.x, vel.y, vel.z],
+            drag_coefficient: c.drag.unwrap_or(0.0),
+            trajectory_write: false,
+            group: c.group.unwrap_or(0),
+        });
+    }
+    Ok(configs)
 }

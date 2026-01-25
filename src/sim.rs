@@ -134,6 +134,7 @@ impl Simulator {
     pub fn time(&self) -> f64 { self.time }
     pub fn dt(&self) -> f64 { self.dt }
     pub fn set_dt(&mut self, dt: f64) { self.dt = dt; }
+    pub(crate) fn groups(&self) -> &[usize] { &self.groups }
 
     /// Получить матрицу состояний Nx6 (x,y,z,vx,vy,vz)
     pub fn state_matrix(&self) -> Vec<[f64; 6]> {
@@ -148,16 +149,12 @@ impl Simulator {
         out
     }
 
-    #[cfg(target_arch = "wasm32")]
     pub(crate) fn positions(&self) -> &[Vector3<f64>] { &self.x }
 
-    #[cfg(target_arch = "wasm32")]
     pub(crate) fn velocities(&self) -> &[Vector3<f64>] { &self.v }
 
-    #[cfg(target_arch = "wasm32")]
     pub(crate) fn set_position(&mut self, i: usize, pos: Vector3<f64>) { self.x[i] = pos; }
 
-    #[cfg(target_arch = "wasm32")]
     pub(crate) fn set_velocity(&mut self, i: usize, vel: Vector3<f64>) { self.v[i] = vel; }
 
     /// Ссылка на траекторию i-го тела, если запись включена
