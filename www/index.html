@@ -429,6 +429,15 @@
         grid-template-columns: 1fr 1fr;
         gap: 10px;
       }
+      .record-actions {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+      }
+      .record-actions .pill {
+        margin-left: auto;
+      }
     </style>
   </head>
   <body>
@@ -548,6 +557,32 @@
           <div class="setup-section">
             <h3>Groups</h3>
             <div id="group-color-list" class="group-color-list"></div>
+          </div>
+          <div class="setup-section">
+            <h3>Recording</h3>
+            <div class="field-row">
+              <div class="field">
+                <label>Capture</label>
+                <label class="toggle" style="gap: 10px; align-items: center; width: fit-content;">
+                  <input id="record-toggle" type="checkbox" />
+                  <span class="track"><span class="thumb"></span></span>
+                  <span class="toggle-label">Record</span>
+                </label>
+              </div>
+              <div class="field">
+                <label for="record-stride-input">Sample every (steps)</label>
+                <input id="record-stride-input" type="number" min="1" step="1" value="1" />
+              </div>
+              <div class="field">
+                <label for="record-max-frames-input">Max frames (0 = no limit)</label>
+                <input id="record-max-frames-input" type="number" min="0" step="1" value="0" />
+              </div>
+            </div>
+            <div class="record-actions" style="margin-top: 8px;">
+              <button id="record-download-btn" class="action-btn" type="button">Download History</button>
+              <button id="record-clear-btn" class="action-btn" type="button">Clear</button>
+              <span id="record-status" class="pill">0 frames</span>
+            </div>
           </div>
           <div class="setup-section">
             <h3>Config</h3>

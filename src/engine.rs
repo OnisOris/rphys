@@ -202,6 +202,30 @@ impl Engine {
         }
     }
 
+    pub fn state_matrix_flat(&self) -> Vec<f32> {
+        match &self.model {
+            ModelKind::Particles(model) => {
+                let states = model.state_matrix();
+                let mut out = Vec::with_capacity(states.len() * 6);
+                for row in states {
+                    out.push(row[0] as f32);
+                    out.push(row[1] as f32);
+                    out.push(row[2] as f32);
+                    out.push(row[3] as f32);
+                    out.push(row[4] as f32);
+                    out.push(row[5] as f32);
+                }
+                out
+            }
+        }
+    }
+
+    pub fn dt(&self) -> f64 {
+        match &self.model {
+            ModelKind::Particles(model) => model.dt(),
+        }
+    }
+
     pub fn groups(&self) -> Vec<u32> {
         match &self.model {
             ModelKind::Particles(model) => model.groups().iter().map(|g| *g as u32).collect(),

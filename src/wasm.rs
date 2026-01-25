@@ -153,6 +153,10 @@ impl WasmSim {
 
     pub fn positions(&self) -> Vec<f32> { self.engine.positions_flat() }
 
+    pub fn states(&self) -> Vec<f32> { self.engine.state_matrix_flat() }
+
+    pub fn dt(&self) -> f64 { self.engine.dt() }
+
     pub fn set_algorithm(&mut self, algorithm_id: &str) -> Result<(), JsValue> {
         self.engine
             .set_algorithm(algorithm_id)

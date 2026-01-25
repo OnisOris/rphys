@@ -28,6 +28,12 @@ const groupColorList = document.getElementById("group-color-list");
 const saveConfigBtn = document.getElementById("save-config-btn");
 const loadConfigBtn = document.getElementById("load-config-btn");
 const configFileInput = document.getElementById("config-file-input");
+const recordToggle = document.getElementById("record-toggle");
+const recordStrideInput = document.getElementById("record-stride-input");
+const recordMaxFramesInput = document.getElementById("record-max-frames-input");
+const recordDownloadBtn = document.getElementById("record-download-btn");
+const recordClearBtn = document.getElementById("record-clear-btn");
+const recordStatus = document.getElementById("record-status");
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(window.devicePixelRatio || 1);
@@ -215,6 +221,10 @@ let customDt = 1 / 60;
 let activeModelId = null;
 let activeAlgorithmId = null;
 let currentGroups = [];
+let recording = false;
+let recordFrames = [];
+let recordStep = 0;
+let recordMeta = null;
 
 const groupPalette = [
   "#6ad1ff",
@@ -674,6 +684,123 @@ function renderGroupColors() {
   });
 }
 
+function readRecordStride() {
+  const stride = Math.round(Number(recordStrideInput?.value) || 1);
+  return Math.max(1, stride);
+}
+
+function readRecordMaxFrames() {
+  const maxFrames = Math.round(Number(recordMaxFramesInput?.value) || 0);
+  return Math.max(0, maxFrames);
+}
+
+function currentDt() {
+  if (sim && typeof sim.dt === "function") {
+    const dt = sim.dt();
+    if (Number.isFinite(dt)) return dt;
+  }
+  return Number(dtInput?.value) || customDt;
+}
+
+function buildRecordMeta() {
+  const groupColorObj = {};
+  groupColors.forEach((value, key) => {
+    groupColorObj[key] = value;
+  });
+  const modelId = activeModelId || currentModelId();
+  const algorithmId = activeAlgorithmId || currentAlgorithmId(modelId);
+  const meta = {
+    version: 1,
+    createdAt: new Date().toISOString(),
+    dt: currentDt(),
+    stride: readRecordStride(),
+    maxFrames: readRecordMaxFrames(),
+    modelId,
+    algorithmId,
+    plane2d: plane2dToggle?.checked || false,
+    agentCount: sim ? sim.len() : 0,
+    fields: ["x", "y", "z", "vx", "vy", "vz"],
+    groupColors: groupColorObj,
+  };
+  if (sim && typeof sim.groups === "function") {
+    meta.groups = Array.from(sim.groups());
+  }
+  return meta;
+}
+
+function updateRecordStatus() {
+  if (recordStatus) {
+    const armed = !recording && !!recordToggle?.checked;
+    recordStatus.textContent = recording
+      ? `${recordFrames.length} frames • rec`
+      : armed
+        ? `${recordFrames.length} frames • armed`
+        : `${recordFrames.length} frames`;
+  }
+  if (recordDownloadBtn) {
+    recordDownloadBtn.disabled = recordFrames.length === 0;
+  }
+  if (recordClearBtn) {
+    recordClearBtn.disabled = recordFrames.length === 0 && !recording;
+  }
+}
+
+function setRecording(next) {
+  if (recording === next) return;
+  recording = next;
+  if (recordToggle) recordToggle.checked = recording;
+  if (recording) {
+    recordFrames = [];
+    recordStep = 0;
+    recordMeta = buildRecordMeta();
+    captureFrame(true);
+  }
+  updateRecordStatus();
+}
+
+function clearRecording() {
+  recordFrames = [];
+  recordStep = 0;
+  if (recording) {
+    recordMeta = buildRecordMeta();
+    captureFrame(true);
+  }
+  updateRecordStatus();
+}
+
+function captureFrame(force = false) {
+  if (!recording || !sim) return;
+  const stride = recordMeta?.stride || readRecordStride();
+  if (!force && recordStep % stride !== 0) return;
+  if (typeof sim.states !== "function") return;
+  recordFrames.push(Array.from(sim.states()));
+  updateRecordStatus();
+  const maxFrames = recordMeta?.maxFrames || 0;
+  if (maxFrames > 0 && recordFrames.length >= maxFrames) {
+    setRecording(false);
+  }
+}
+
+function downloadRecording() {
+  if (recordFrames.length === 0) return;
+  if (!recordMeta) {
+    recordMeta = buildRecordMeta();
+  }
+  const payload = {
+    meta: recordMeta,
+    frames: recordFrames,
+  };
+  const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `rphys-history-${Date.now()}.json`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 function buildSetupConfig() {
   const algo = algorithmSelectPanel?.value || algorithmSelect?.value || currentAlgorithmId(customModelId);
   const plane2d = panelPlane2dToggle?.checked ?? plane2dToggle?.checked ?? false;
@@ -803,6 +930,9 @@ function buildCustomConfig(algorithmId) {
 }
 
 function resetSimulation(modelId, algorithmId) {
+  if (recording) {
+    setRecording(false);
+  }
   const targetModel = modelId || currentModelId();
   const targetAlgo = algorithmId || currentAlgorithmId(targetModel);
   let actualModel = targetModel;
@@ -898,6 +1028,7 @@ if (applySetupBtn) {
     const targetModel = hasClusters ? customModelId : (modelSelect?.value || currentModelId());
     const targetAlgo = algorithmSelectPanel?.value || algorithmSelect?.value || currentAlgorithmId(targetModel);
     const plane2dDesired = panelPlane2dToggle?.checked;
+    const recordAfterApply = !!recordToggle?.checked;
 
     // If user defined clusters, force model to custom for this run.
     if (hasClusters && modelSelect) {
@@ -918,6 +1049,9 @@ if (applySetupBtn) {
     resetSimulation(targetModel, targetAlgo);
     if (plane2dDesired !== undefined && sim) {
       sim.set_plane_2d(plane2dDesired);
+    }
+    if (recordToggle) {
+      setRecording(recordAfterApply);
     }
 
     openSetup(false);
@@ -972,6 +1106,36 @@ if (loadConfigBtn && configFileInput) {
   });
 }
 
+if (recordToggle) {
+  recordToggle.addEventListener("change", () => {
+    updateRecordStatus();
+  });
+}
+
+if (recordStrideInput) {
+  recordStrideInput.addEventListener("input", () => {
+    const stride = readRecordStride();
+    recordStrideInput.value = String(stride);
+    if (recording && recordMeta) recordMeta.stride = stride;
+  });
+}
+
+if (recordMaxFramesInput) {
+  recordMaxFramesInput.addEventListener("input", () => {
+    const maxFrames = readRecordMaxFrames();
+    recordMaxFramesInput.value = String(maxFrames);
+    if (recording && recordMeta) recordMeta.maxFrames = maxFrames;
+  });
+}
+
+if (recordDownloadBtn) {
+  recordDownloadBtn.addEventListener("click", () => downloadRecording());
+}
+
+if (recordClearBtn) {
+  recordClearBtn.addEventListener("click", () => clearRecording());
+}
+
 // Initialize selects to custom model so setup matches initial spawn.
 if (modelSelect) {
   modelSelect.value = customModelId;
@@ -980,6 +1144,7 @@ refreshAlgorithmSelect(customModelId, algorithmSelectPanel?.value || algorithmSe
 syncAlgorithmSelects(algorithmSelectPanel?.value || algorithmSelect?.value || currentAlgorithmId(customModelId));
 renderClusters();
 resetSimulation(customModelId, currentAlgorithmId(customModelId));
+updateRecordStatus();
 
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
@@ -1297,6 +1462,10 @@ function animate() {
 
   if (!paused) {
     sim.tick();
+    if (recording) {
+      recordStep += 1;
+      captureFrame();
+    }
   }
 
   if (dragging && dragIndex !== null) {
