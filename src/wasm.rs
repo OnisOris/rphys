@@ -1,5 +1,6 @@
 #![cfg(target_arch = "wasm32")]
 
+use crate::algorithms::flocking::FlockParams;
 use crate::engine::{
     algorithm_catalog, model_catalog, AlgorithmInfo, Engine, ModelInfo, ALGO_FLOCKING, MODEL_RING,
 };
@@ -32,6 +33,12 @@ pub fn algorithms_for_model(model_id: &str) -> js_sys::Array {
         out.push(&algorithm_info_to_js(info));
     }
     out
+}
+
+#[wasm_bindgen]
+pub fn flocking_defaults() -> JsValue {
+    let params = FlockParams::default();
+    serde_wasm_bindgen::to_value(&params).unwrap_or(JsValue::NULL)
 }
 
 fn model_info_to_js(info: &ModelInfo) -> JsValue {
@@ -149,6 +156,14 @@ impl WasmSim {
 
     pub fn set_uniform_force(&mut self, fx: f64, fy: f64, fz: f64) {
         self.engine.set_uniform_force(Vector3::new(fx, fy, fz));
+    }
+
+    pub fn set_flock_params(&mut self, params: JsValue) -> Result<(), JsValue> {
+        let params: FlockParams = serde_wasm_bindgen::from_value(params)
+            .map_err(|e| JsValue::from_str(&format!("invalid flock params: {}", e)))?;
+        self.engine
+            .set_flock_params(params)
+            .map_err(|e| JsValue::from_str(&e))
     }
 
     pub fn positions(&self) -> Vec<f32> { self.engine.positions_flat() }

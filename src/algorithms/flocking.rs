@@ -1,5 +1,6 @@
 use crate::models::particles::ParticleModel;
 use nalgebra::Vector3;
+use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_NEIGHBOR_RADIUS: f64 = 2.6;
 pub const DEFAULT_SEPARATION_RADIUS: f64 = 0.9;
@@ -12,7 +13,8 @@ pub const DEFAULT_MAX_SPEED: f64 = 2.4;
 pub const DEFAULT_MAX_FORCE: f64 = 1.6;
 pub const DEFAULT_SPEED_LIMIT: f64 = 2.0;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct FlockParams {
     pub neighbor_radius: f64,
     pub separation_radius: f64,

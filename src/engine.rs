@@ -266,6 +266,16 @@ impl Engine {
             ModelKind::Particles(model) => model.set_uniform_force(f),
         }
     }
+
+    pub fn set_flock_params(&mut self, params: FlockParams) -> Result<(), String> {
+        match &mut self.algorithm {
+            AlgorithmKind::Flocking(algo) => {
+                algo.params = params;
+                Ok(())
+            }
+            _ => Err("current algorithm does not support flocking params".to_string()),
+        }
+    }
 }
 
 fn normalize_model_id(id: &str) -> Option<&'static str> {

@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rphys-pb-reader"
+version = "0.1.0"
+description = "CLI reader for rphys protobuf trajectory recordings"
+requires-python = ">=3.10"
+dependencies = ["matplotlib>=3.8", "numpy>=1.24", "PySide6>=6.6"]
+
+[project.scripts]
+rphys-pb = "app.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

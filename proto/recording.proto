@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package rphys;
+
+message Recording {
+  RecordMeta meta = 1;
+  uint32 frame_count = 2;
+  // states is frame-major: for each frame, for each agent, fields in meta.fields order.
+  repeated float states = 3 [packed = true];
+}
+
+message RecordMeta {
+  uint32 version = 1;
+  string created_at = 2;
+  double dt = 3;
+  uint32 stride = 4;
+  uint32 max_frames = 5;
+  string model_id = 6;
+  string algorithm_id = 7;
+  bool plane2d = 8;
+  uint32 agent_count = 9;
+  repeated string fields = 10;
+  repeated GroupColor group_colors = 11;
+  repeated uint32 groups = 12 [packed = true];
+  repeated AlgorithmParam algorithm_params = 13;
+}
+
+message GroupColor {
+  uint32 group = 1;
+  string color = 2;
+}
+
+message AlgorithmParam {
+  string key = 1;
+  double value = 2;
+}

@@ -4,9 +4,53 @@ import init, {
   available_models,
   available_algorithms,
   algorithms_for_model,
+  flocking_defaults,
 } from "./pkg/rphys.js";
 
 await init();
+
+const defaultStateFields = ["x", "y", "z", "vx", "vy", "vz"];
+const fallbackFlockParams = {
+  neighbor_radius: 2.6,
+  separation_radius: 0.9,
+  cohesion_weight: 0.45,
+  alignment_weight: 0.65,
+  separation_weight: 10.35,
+  boundary_radius: 6.0,
+  boundary_weight: 0.8,
+  max_speed: 2.4,
+  max_force: 1.6,
+  speed_limit: 2.0,
+};
+
+const rawFlockDefaults =
+  typeof flocking_defaults === "function" ? flocking_defaults() : null;
+const flockParamDefaults = buildFlockParamsDefaults(
+  rawFlockDefaults,
+  fallbackFlockParams
+);
+
+const algorithmParamDefinitions = {
+  flocking: {
+    label: "Flocking",
+    params: [
+      { key: "neighbor_radius", label: "Neighbor radius (m)", step: 0.1, min: 0 },
+      { key: "separation_radius", label: "Separation radius (m)", step: 0.1, min: 0 },
+      { key: "cohesion_weight", label: "Cohesion weight (unitless)", step: 0.05, min: 0 },
+      { key: "alignment_weight", label: "Alignment weight (unitless)", step: 0.05, min: 0 },
+      { key: "separation_weight", label: "Separation weight (unitless)", step: 0.1, min: 0 },
+      { key: "boundary_radius", label: "Boundary radius (m)", step: 0.1, min: 0 },
+      { key: "boundary_weight", label: "Boundary weight (unitless)", step: 0.05, min: 0 },
+      { key: "max_speed", label: "Max speed (m/s)", step: 0.1, min: 0 },
+      { key: "max_force", label: "Max force (N)", step: 0.1, min: 0 },
+      { key: "speed_limit", label: "Speed limit gain (1/s)", step: 0.1, min: 0 },
+    ],
+  },
+};
+
+const algorithmParamsState = {
+  flocking: { ...flockParamDefaults },
+};
 
 const viewport = document.getElementById("viewport");
 const homeButton = document.getElementById("home-btn");
@@ -16,6 +60,8 @@ const modelSelect = document.getElementById("model-select");
 const algorithmSelect = document.getElementById("algorithm-select");
 const setupToggleBtn = document.getElementById("setup-toggle-btn");
 const setupPanel = document.getElementById("setup-panel");
+const setupTabButtons = document.querySelectorAll("[data-setup-tab]");
+const setupTabContents = document.querySelectorAll("[data-setup-content]");
 const applySetupBtn = document.getElementById("apply-setup-btn");
 const closeSetupBtn = document.getElementById("close-setup-btn");
 const dtInput = document.getElementById("dt-input");
@@ -25,15 +71,27 @@ const agentTotalEl = document.getElementById("agent-total");
 const algorithmSelectPanel = document.getElementById("algorithm-select-panel");
 const panelPlane2dToggle = document.getElementById("panel-plane2d-toggle");
 const groupColorList = document.getElementById("group-color-list");
+const algorithmParamsPanel = document.getElementById("algorithm-params");
+const algorithmParamsEmpty = document.getElementById("algorithm-params-empty");
 const saveConfigBtn = document.getElementById("save-config-btn");
 const loadConfigBtn = document.getElementById("load-config-btn");
 const configFileInput = document.getElementById("config-file-input");
 const recordToggle = document.getElementById("record-toggle");
 const recordStrideInput = document.getElementById("record-stride-input");
 const recordMaxFramesInput = document.getElementById("record-max-frames-input");
+const recordFastTimeInput = document.getElementById("record-fast-time-input");
+const recordFastBtn = document.getElementById("record-fast-btn");
 const recordDownloadBtn = document.getElementById("record-download-btn");
 const recordClearBtn = document.getElementById("record-clear-btn");
 const recordStatus = document.getElementById("record-status");
+const playbackLoadBtn = document.getElementById("playback-load-btn");
+const playbackExitBtn = document.getElementById("playback-exit-btn");
+const playbackSeekBtn = document.getElementById("playback-seek-btn");
+const playbackGoBtn = document.getElementById("playback-go-btn");
+const playbackFileInput = document.getElementById("playback-file-input");
+const playbackTimeInput = document.getElementById("playback-time-input");
+const playbackSlider = document.getElementById("playback-slider");
+const playbackStatus = document.getElementById("playback-status");
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(window.devicePixelRatio || 1);
@@ -225,6 +283,10 @@ let recording = false;
 let recordFrames = [];
 let recordStep = 0;
 let recordMeta = null;
+let fastExportRunning = false;
+let playbackActive = false;
+let playbackData = null;
+let playbackIndex = 0;
 
 const groupPalette = [
   "#6ad1ff",
@@ -294,6 +356,7 @@ if (modelSelect) {
   modelSelect.addEventListener("change", () => {
     refreshAlgorithmSelect(modelSelect.value);
     resetSimulation();
+    renderAlgorithmParamsPanel();
   });
 }
 
@@ -307,12 +370,15 @@ if (algorithmSelect) {
       try {
         sim.set_algorithm(targetAlgo);
         activeAlgorithmId = targetAlgo;
+        applyAlgorithmParamsToSim(targetAlgo);
+        renderAlgorithmParamsPanel();
         return;
       } catch (err) {
         console.error("set_algorithm failed, recreating sim", err);
       }
     }
     resetSimulation();
+    renderAlgorithmParamsPanel();
   });
 }
 
@@ -322,6 +388,7 @@ if (algorithmSelectPanel) {
     if (algorithmSelect) {
       algorithmSelect.value = algorithmSelectPanel.value;
     }
+    renderAlgorithmParamsPanel();
   });
 }
 
@@ -467,12 +534,25 @@ function onGizmoDoubleClick(event) {
 let sim = null;
 let paused = false;
 
+function updatePlaybackControls() {
+  if (!playbackGoBtn) return;
+  if (!playbackActive || !playbackData) {
+    playbackGoBtn.disabled = true;
+    playbackGoBtn.textContent = "Go";
+    return;
+  }
+  playbackGoBtn.disabled = false;
+  playbackGoBtn.textContent = paused ? "Go" : "Pause";
+}
+
 function setPaused(next) {
   paused = next;
-  if (!pauseButton) return;
-  pauseButton.dataset.state = paused ? "paused" : "running";
-  pauseButton.textContent = paused ? "Resume" : "Pause";
-  pauseButton.setAttribute("aria-pressed", paused ? "true" : "false");
+  if (pauseButton) {
+    pauseButton.dataset.state = paused ? "paused" : "running";
+    pauseButton.textContent = paused ? "Resume" : "Pause";
+    pauseButton.setAttribute("aria-pressed", paused ? "true" : "false");
+  }
+  updatePlaybackControls();
 }
 
 const geometry = new THREE.SphereGeometry(0.12, 16, 16);
@@ -486,6 +566,14 @@ const meshes = [];
 
 function refreshGroups() {
   currentGroups = [];
+  if (playbackActive && playbackData) {
+    if (Array.isArray(playbackData.groups) && playbackData.groups.length > 0) {
+      currentGroups = playbackData.groups.slice();
+    } else {
+      currentGroups = new Array(playbackData.agentCount).fill(0);
+    }
+    return;
+  }
   if (!sim) return;
   if (typeof sim.groups === "function") {
     currentGroups = Array.from(sim.groups());
@@ -508,7 +596,7 @@ function applyGroupColorsToMeshes() {
 function rebuildMeshes() {
   meshes.forEach((mesh) => scene.remove(mesh));
   meshes.length = 0;
-  const count = sim ? sim.len() : 0;
+  const count = playbackActive && playbackData ? playbackData.agentCount : (sim ? sim.len() : 0);
   refreshGroups();
   for (let i = 0; i < count; i += 1) {
     const groupId = currentGroups[i] ?? 0;
@@ -527,7 +615,11 @@ function clusterCountTotal() {
 
 function updateAgentTotal() {
   if (!agentTotalEl) return;
-  agentTotalEl.textContent = `${clusterCountTotal()} agents`;
+  if (playbackActive && playbackData) {
+    agentTotalEl.textContent = `${playbackData.agentCount} agents (playback)`;
+  } else {
+    agentTotalEl.textContent = `${clusterCountTotal()} agents`;
+  }
 }
 
 function renderClusters() {
@@ -591,13 +683,16 @@ function renderClusters() {
   renderGroupColors();
 }
 
-function makeNumberField(label, value, onChange) {
+function makeNumberField(label, value, onChange, options) {
   const wrapper = document.createElement("div");
   wrapper.className = "field";
   const lab = document.createElement("label");
   lab.textContent = label;
   const input = document.createElement("input");
   input.type = "number";
+  if (options?.step !== undefined) input.step = String(options.step);
+  if (options?.min !== undefined) input.min = String(options.min);
+  if (options?.max !== undefined) input.max = String(options.max);
   input.value = value ?? 0;
   input.addEventListener("input", () => onChange(Number(input.value)));
   wrapper.append(lab, input);
@@ -694,6 +789,11 @@ function readRecordMaxFrames() {
   return Math.max(0, maxFrames);
 }
 
+function readFastTime() {
+  const time = Number(recordFastTimeInput?.value) || 0;
+  return Math.max(0, time);
+}
+
 function currentDt() {
   if (sim && typeof sim.dt === "function") {
     const dt = sim.dt();
@@ -702,30 +802,740 @@ function currentDt() {
   return Number(dtInput?.value) || customDt;
 }
 
-function buildRecordMeta() {
+function coerceNumber(value, fallback) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
+}
+
+function buildFlockParamsDefaults(raw, fallback) {
+  return {
+    neighbor_radius: coerceNumber(raw?.neighbor_radius, fallback.neighbor_radius),
+    separation_radius: coerceNumber(raw?.separation_radius, fallback.separation_radius),
+    cohesion_weight: coerceNumber(raw?.cohesion_weight, fallback.cohesion_weight),
+    alignment_weight: coerceNumber(raw?.alignment_weight, fallback.alignment_weight),
+    separation_weight: coerceNumber(raw?.separation_weight, fallback.separation_weight),
+    boundary_radius: coerceNumber(raw?.boundary_radius, fallback.boundary_radius),
+    boundary_weight: coerceNumber(raw?.boundary_weight, fallback.boundary_weight),
+    max_speed: coerceNumber(raw?.max_speed, fallback.max_speed),
+    max_force: coerceNumber(raw?.max_force, fallback.max_force),
+    speed_limit: coerceNumber(raw?.speed_limit, fallback.speed_limit),
+  };
+}
+
+function normalizeFlockParams(raw) {
+  return buildFlockParamsDefaults(raw, flockParamDefaults);
+}
+
+function ensureAlgorithmParams(algorithmId) {
+  if (!algorithmId) return {};
+  if (!algorithmParamsState[algorithmId]) {
+    if (algorithmId === "flocking") {
+      algorithmParamsState[algorithmId] = { ...flockParamDefaults };
+    } else {
+      algorithmParamsState[algorithmId] = {};
+    }
+  }
+  return algorithmParamsState[algorithmId];
+}
+
+function buildAlgorithmParamsConfig() {
+  const out = {};
+  Object.entries(algorithmParamsState).forEach(([algoId, params]) => {
+    if (params && typeof params === "object") {
+      out[algoId] = { ...params };
+    }
+  });
+  return out;
+}
+
+function loadAlgorithmParamsConfig(raw) {
+  if (!raw || typeof raw !== "object") return;
+  Object.entries(raw).forEach(([algoId, params]) => {
+    if (!params || typeof params !== "object") return;
+    if (algoId === "flocking") {
+      algorithmParamsState[algoId] = normalizeFlockParams(params);
+    } else {
+      algorithmParamsState[algoId] = { ...params };
+    }
+  });
+}
+
+function applyAlgorithmParamsToSim(algorithmId, simOverride) {
+  const targetSim = simOverride || sim;
+  if (!targetSim || !algorithmId) return;
+  if (algorithmId === "flocking" && typeof targetSim.set_flock_params === "function") {
+    const params = ensureAlgorithmParams(algorithmId);
+    try {
+      targetSim.set_flock_params(params);
+    } catch (err) {
+      console.error("set_flock_params failed", err);
+    }
+  }
+}
+
+function renderAlgorithmParamsPanel() {
+  if (!algorithmParamsPanel) return;
+  algorithmParamsPanel.innerHTML = "";
+  const algorithmId =
+    algorithmSelectPanel?.value ||
+    algorithmSelect?.value ||
+    currentAlgorithmId(customModelId);
+  const definition = algorithmParamDefinitions[algorithmId];
+  if (!definition) {
+    if (algorithmParamsEmpty) algorithmParamsEmpty.style.display = "block";
+    return;
+  }
+  if (algorithmParamsEmpty) algorithmParamsEmpty.style.display = "none";
+  const params = ensureAlgorithmParams(algorithmId);
+  const grid = document.createElement("div");
+  grid.className = "params-grid";
+  definition.params.forEach((param) => {
+    const value = coerceNumber(params[param.key], 0);
+    const field = makeNumberField(
+      param.label,
+      value,
+      (v) => {
+        const next = Number.isFinite(v) ? v : params[param.key];
+        params[param.key] = next;
+        if (activeAlgorithmId === algorithmId) {
+          applyAlgorithmParamsToSim(algorithmId);
+        }
+      },
+      { step: param.step, min: param.min }
+    );
+    grid.append(field);
+  });
+  algorithmParamsPanel.append(grid);
+}
+
+function buildRecordMeta(options) {
+  const opts = options || {};
+  const simRef = opts.simOverride || sim;
   const groupColorObj = {};
   groupColors.forEach((value, key) => {
     groupColorObj[key] = value;
   });
-  const modelId = activeModelId || currentModelId();
-  const algorithmId = activeAlgorithmId || currentAlgorithmId(modelId);
+  const modelId =
+    opts.modelIdOverride || activeModelId || currentModelId();
+  const algorithmId =
+    opts.algorithmIdOverride ||
+    activeAlgorithmId ||
+    currentAlgorithmId(modelId);
+  const plane2d =
+    opts.plane2dOverride ??
+    (panelPlane2dToggle?.checked ?? plane2dToggle?.checked ?? false);
+  const dt =
+    simRef && typeof simRef.dt === "function" ? simRef.dt() : currentDt();
+  const algorithmParams = ensureAlgorithmParams(algorithmId);
+  const algorithmParamsSnapshot = {};
+  if (algorithmParams && typeof algorithmParams === "object") {
+    for (const [key, value] of Object.entries(algorithmParams)) {
+      const num = Number(value);
+      if (key && Number.isFinite(num)) {
+        algorithmParamsSnapshot[key] = num;
+      }
+    }
+  }
   const meta = {
     version: 1,
     createdAt: new Date().toISOString(),
-    dt: currentDt(),
+    dt,
     stride: readRecordStride(),
     maxFrames: readRecordMaxFrames(),
     modelId,
     algorithmId,
-    plane2d: plane2dToggle?.checked || false,
-    agentCount: sim ? sim.len() : 0,
-    fields: ["x", "y", "z", "vx", "vy", "vz"],
+    plane2d,
+    agentCount: simRef ? simRef.len() : 0,
+    fields: defaultStateFields,
     groupColors: groupColorObj,
   };
-  if (sim && typeof sim.groups === "function") {
-    meta.groups = Array.from(sim.groups());
+  if (Object.keys(algorithmParamsSnapshot).length > 0) {
+    meta.algorithmParams = algorithmParamsSnapshot;
+  }
+  if (simRef && typeof simRef.groups === "function") {
+    meta.groups = Array.from(simRef.groups());
   }
   return meta;
+}
+
+const recordTextEncoder = new TextEncoder();
+const ProtoWire = {
+  Varint: 0,
+  SixtyFourBit: 1,
+  LengthDelimited: 2,
+};
+
+function encodeVarint(value) {
+  let v = value >>> 0;
+  const bytes = [];
+  while (v >= 0x80) {
+    bytes.push((v & 0x7f) | 0x80);
+    v >>>= 7;
+  }
+  bytes.push(v);
+  return new Uint8Array(bytes);
+}
+
+function encodeTag(fieldNumber, wireType) {
+  return encodeVarint((fieldNumber << 3) | wireType);
+}
+
+function concatChunks(chunks, totalLength) {
+  const length =
+    totalLength ??
+    chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const out = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
+}
+
+function pushUint32Field(fieldNumber, value, chunks) {
+  chunks.push(encodeTag(fieldNumber, ProtoWire.Varint));
+  chunks.push(encodeVarint(value));
+}
+
+function pushBoolField(fieldNumber, value, chunks) {
+  chunks.push(encodeTag(fieldNumber, ProtoWire.Varint));
+  chunks.push(encodeVarint(value ? 1 : 0));
+}
+
+function pushDoubleField(fieldNumber, value, chunks) {
+  const buffer = new ArrayBuffer(8);
+  new DataView(buffer).setFloat64(0, value, true);
+  chunks.push(encodeTag(fieldNumber, ProtoWire.SixtyFourBit));
+  chunks.push(new Uint8Array(buffer));
+}
+
+function pushStringField(fieldNumber, value, chunks) {
+  const bytes = recordTextEncoder.encode(String(value));
+  chunks.push(encodeTag(fieldNumber, ProtoWire.LengthDelimited));
+  chunks.push(encodeVarint(bytes.length));
+  chunks.push(bytes);
+}
+
+function pushMessageField(fieldNumber, payload, chunks) {
+  if (!payload || payload.length === 0) return;
+  chunks.push(encodeTag(fieldNumber, ProtoWire.LengthDelimited));
+  chunks.push(encodeVarint(payload.length));
+  chunks.push(payload);
+}
+
+function pushPackedVarintField(fieldNumber, values, chunks) {
+  if (!values || values.length === 0) return;
+  const packedChunks = [];
+  let packedLength = 0;
+  for (const value of values) {
+    const bytes = encodeVarint(value);
+    packedChunks.push(bytes);
+    packedLength += bytes.length;
+  }
+  if (packedLength === 0) return;
+  chunks.push(encodeTag(fieldNumber, ProtoWire.LengthDelimited));
+  chunks.push(encodeVarint(packedLength));
+  for (const chunk of packedChunks) {
+    chunks.push(chunk);
+  }
+}
+
+function pushPackedFloat32Field(fieldNumber, dataChunks, byteLength, chunks) {
+  if (!dataChunks || dataChunks.length === 0 || byteLength === 0) return;
+  chunks.push(encodeTag(fieldNumber, ProtoWire.LengthDelimited));
+  chunks.push(encodeVarint(byteLength));
+  for (const chunk of dataChunks) {
+    chunks.push(chunk);
+  }
+}
+
+function toUint32OrNull(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num < 0) return null;
+  const floored = Math.floor(num);
+  return Math.min(0xffffffff, floored) >>> 0;
+}
+
+function decodeVarint(data, offset) {
+  let value = 0;
+  let shift = 0;
+  let pos = offset;
+  while (pos < data.length) {
+    const byte = data[pos];
+    pos += 1;
+    value |= (byte & 0x7f) << shift;
+    if (byte < 0x80) {
+      return { value, offset: pos };
+    }
+    shift += 7;
+  }
+  throw new Error("Invalid varint");
+}
+
+function skipField(data, offset, wireType) {
+  if (wireType === 0) {
+    return decodeVarint(data, offset).offset;
+  }
+  if (wireType === 1) {
+    return offset + 8;
+  }
+  if (wireType === 2) {
+    const { value: length, offset: next } = decodeVarint(data, offset);
+    return next + length;
+  }
+  if (wireType === 5) {
+    return offset + 4;
+  }
+  throw new Error(`Unsupported wire type ${wireType}`);
+}
+
+function decodeString(data, offset) {
+  const { value: length, offset: next } = decodeVarint(data, offset);
+  const end = next + length;
+  const text = new TextDecoder().decode(data.subarray(next, end));
+  return { value: text, offset: end };
+}
+
+function decodePackedVarints(data, offset) {
+  const { value: length, offset: next } = decodeVarint(data, offset);
+  const end = next + length;
+  const values = [];
+  let pos = next;
+  while (pos < end) {
+    const decoded = decodeVarint(data, pos);
+    values.push(decoded.value);
+    pos = decoded.offset;
+  }
+  return { values, offset: end };
+}
+
+function decodeAlgorithmParam(data) {
+  let offset = 0;
+  let key = "";
+  let value = Number.NaN;
+  while (offset < data.length) {
+    const tag = decodeVarint(data, offset);
+    const field = tag.value >> 3;
+    const wireType = tag.value & 7;
+    offset = tag.offset;
+    if (field === 1 && wireType === 2) {
+      const decoded = decodeString(data, offset);
+      key = decoded.value;
+      offset = decoded.offset;
+    } else if (field === 2 && wireType === 1) {
+      value = new DataView(
+        data.buffer,
+        data.byteOffset + offset,
+        8
+      ).getFloat64(0, true);
+      offset += 8;
+    } else {
+      offset = skipField(data, offset, wireType);
+    }
+  }
+  return { key, value };
+}
+
+function decodeRecordMeta(data) {
+  const meta = {
+    version: 0,
+    createdAt: "",
+    dt: Number.NaN,
+    stride: 1,
+    maxFrames: 0,
+    modelId: "",
+    algorithmId: "",
+    plane2d: false,
+    agentCount: 0,
+    fields: [],
+    algorithmParams: {},
+    groups: [],
+  };
+  let offset = 0;
+  while (offset < data.length) {
+    const tag = decodeVarint(data, offset);
+    const field = tag.value >> 3;
+    const wireType = tag.value & 7;
+    offset = tag.offset;
+    if (field === 1 && wireType === 0) {
+      const decoded = decodeVarint(data, offset);
+      meta.version = decoded.value;
+      offset = decoded.offset;
+    } else if (field === 2 && wireType === 2) {
+      const decoded = decodeString(data, offset);
+      meta.createdAt = decoded.value;
+      offset = decoded.offset;
+    } else if (field === 3 && wireType === 1) {
+      meta.dt = new DataView(data.buffer, data.byteOffset + offset, 8).getFloat64(0, true);
+      offset += 8;
+    } else if (field === 4 && wireType === 0) {
+      const decoded = decodeVarint(data, offset);
+      meta.stride = decoded.value;
+      offset = decoded.offset;
+    } else if (field === 5 && wireType === 0) {
+      const decoded = decodeVarint(data, offset);
+      meta.maxFrames = decoded.value;
+      offset = decoded.offset;
+    } else if (field === 6 && wireType === 2) {
+      const decoded = decodeString(data, offset);
+      meta.modelId = decoded.value;
+      offset = decoded.offset;
+    } else if (field === 7 && wireType === 2) {
+      const decoded = decodeString(data, offset);
+      meta.algorithmId = decoded.value;
+      offset = decoded.offset;
+    } else if (field === 8 && wireType === 0) {
+      const decoded = decodeVarint(data, offset);
+      meta.plane2d = decoded.value !== 0;
+      offset = decoded.offset;
+    } else if (field === 9 && wireType === 0) {
+      const decoded = decodeVarint(data, offset);
+      meta.agentCount = decoded.value;
+      offset = decoded.offset;
+    } else if (field === 10 && wireType === 2) {
+      const decoded = decodeString(data, offset);
+      meta.fields.push(decoded.value);
+      offset = decoded.offset;
+    } else if (field === 12 && wireType === 2) {
+      const decoded = decodePackedVarints(data, offset);
+      meta.groups = decoded.values;
+      offset = decoded.offset;
+    } else if (field === 13 && wireType === 2) {
+      const decoded = decodeVarint(data, offset);
+      const payload = data.subarray(decoded.offset, decoded.offset + decoded.value);
+      const param = decodeAlgorithmParam(payload);
+      if (param.key && Number.isFinite(param.value)) {
+        meta.algorithmParams[param.key] = param.value;
+      }
+      offset = decoded.offset + decoded.value;
+    } else {
+      offset = skipField(data, offset, wireType);
+    }
+  }
+  return meta;
+}
+
+function decodeRecording(buffer) {
+  const data = new Uint8Array(buffer);
+  let metaBytes = null;
+  let frameCount = 0;
+  let statesBytes = null;
+  let offset = 0;
+  while (offset < data.length) {
+    const tag = decodeVarint(data, offset);
+    const field = tag.value >> 3;
+    const wireType = tag.value & 7;
+    offset = tag.offset;
+    if (field === 1 && wireType === 2) {
+      const decoded = decodeVarint(data, offset);
+      metaBytes = data.subarray(decoded.offset, decoded.offset + decoded.value);
+      offset = decoded.offset + decoded.value;
+    } else if (field === 2 && wireType === 0) {
+      const decoded = decodeVarint(data, offset);
+      frameCount = decoded.value;
+      offset = decoded.offset;
+    } else if (field === 3 && wireType === 2) {
+      const decoded = decodeVarint(data, offset);
+      statesBytes = data.subarray(decoded.offset, decoded.offset + decoded.value);
+      offset = decoded.offset + decoded.value;
+    } else {
+      offset = skipField(data, offset, wireType);
+    }
+  }
+  if (!statesBytes) {
+    throw new Error("Missing states payload");
+  }
+  if (statesBytes.byteLength % 4 !== 0) {
+    throw new Error("Invalid states payload length");
+  }
+  const meta = metaBytes ? decodeRecordMeta(metaBytes) : {};
+  const fields = meta.fields && meta.fields.length > 0 ? meta.fields : defaultStateFields;
+  const fieldCount = fields.length;
+  let alignedBytes = statesBytes;
+  if (alignedBytes.byteOffset % 4 !== 0) {
+    alignedBytes = statesBytes.slice();
+  }
+  const states = new Float32Array(
+    alignedBytes.buffer,
+    alignedBytes.byteOffset,
+    alignedBytes.byteLength / 4
+  );
+  const totalValues = states.length;
+  let agentCount = meta.agentCount || (meta.groups ? meta.groups.length : 0);
+  if (!agentCount && frameCount) {
+    agentCount = Math.floor(totalValues / (frameCount * fieldCount));
+  }
+  if (!frameCount && agentCount) {
+    frameCount = Math.floor(totalValues / (agentCount * fieldCount));
+  }
+  if (!frameCount || !agentCount) {
+    throw new Error("Unable to infer frame or agent count");
+  }
+  const expectedValues = frameCount * agentCount * fieldCount;
+  if (expectedValues > totalValues) {
+    throw new Error("States payload is truncated");
+  }
+  const trimmedStates = expectedValues === totalValues ? states : states.subarray(0, expectedValues);
+  const dt = Number.isFinite(meta.dt) ? meta.dt : 0;
+  const stride = meta.stride || 1;
+  return {
+    meta,
+    fields,
+    fieldCount,
+    frameCount,
+    agentCount,
+    states: trimmedStates,
+    frameStride: agentCount * fieldCount,
+    dt,
+    stride,
+  };
+}
+
+function encodeGroupColor(groupId, color) {
+  const chunks = [];
+  const groupValue = toUint32OrNull(groupId);
+  if (groupValue !== null) {
+    pushUint32Field(1, groupValue, chunks);
+  }
+  if (color) {
+    pushStringField(2, color, chunks);
+  }
+  return concatChunks(chunks);
+}
+
+function encodeAlgorithmParam(key, value) {
+  const chunks = [];
+  if (key) {
+    pushStringField(1, key, chunks);
+  }
+  const num = Number(value);
+  if (Number.isFinite(num)) {
+    pushDoubleField(2, num, chunks);
+  }
+  return concatChunks(chunks);
+}
+
+function encodeRecordMeta(meta) {
+  const chunks = [];
+  const version = toUint32OrNull(meta?.version) ?? 0;
+  if (version !== 0) pushUint32Field(1, version, chunks);
+  if (meta?.createdAt) pushStringField(2, meta.createdAt, chunks);
+  const dt = Number(meta?.dt);
+  if (Number.isFinite(dt)) pushDoubleField(3, dt, chunks);
+  const stride = toUint32OrNull(meta?.stride);
+  if (stride !== null && stride !== 0) pushUint32Field(4, stride, chunks);
+  const maxFrames = toUint32OrNull(meta?.maxFrames);
+  if (maxFrames !== null && maxFrames !== 0) {
+    pushUint32Field(5, maxFrames, chunks);
+  }
+  if (meta?.modelId) pushStringField(6, meta.modelId, chunks);
+  if (meta?.algorithmId) pushStringField(7, meta.algorithmId, chunks);
+  if (meta?.plane2d) pushBoolField(8, true, chunks);
+  const agentCount = toUint32OrNull(meta?.agentCount);
+  if (agentCount !== null && agentCount !== 0) {
+    pushUint32Field(9, agentCount, chunks);
+  }
+  if (Array.isArray(meta?.fields)) {
+    meta.fields.forEach((field) => {
+      if (field) pushStringField(10, field, chunks);
+    });
+  }
+  if (meta?.groupColors && typeof meta.groupColors === "object") {
+    for (const [group, color] of Object.entries(meta.groupColors)) {
+      if (!color) continue;
+      const entry = encodeGroupColor(group, String(color));
+      if (entry.length > 0) {
+        pushMessageField(11, entry, chunks);
+      }
+    }
+  }
+  if (Array.isArray(meta?.groups)) {
+    const groups = meta.groups
+      .map((g) => toUint32OrNull(g))
+      .filter((g) => g !== null);
+    pushPackedVarintField(12, groups, chunks);
+  }
+  if (meta?.algorithmParams && typeof meta.algorithmParams === "object") {
+    for (const [key, value] of Object.entries(meta.algorithmParams)) {
+      if (!key) continue;
+      const num = Number(value);
+      if (!Number.isFinite(num)) continue;
+      const entry = encodeAlgorithmParam(key, num);
+      if (entry.length > 0) {
+        pushMessageField(13, entry, chunks);
+      }
+    }
+  }
+  return concatChunks(chunks);
+}
+
+function collectFrameByteChunks(frames) {
+  const chunks = [];
+  let byteLength = 0;
+  for (const frame of frames) {
+    const f32 =
+      frame instanceof Float32Array ? frame : Float32Array.from(frame);
+    const bytes = new Uint8Array(
+      f32.buffer,
+      f32.byteOffset,
+      f32.byteLength
+    );
+    chunks.push(bytes);
+    byteLength += bytes.length;
+  }
+  return { chunks, byteLength };
+}
+
+function encodeRecording(meta, frames) {
+  const chunks = [];
+  const metaBytes = encodeRecordMeta(meta);
+  if (metaBytes.length > 0) {
+    pushMessageField(1, metaBytes, chunks);
+  }
+
+  const frameCount = toUint32OrNull(frames?.length) ?? 0;
+  if (frameCount !== 0) {
+    pushUint32Field(2, frameCount, chunks);
+  }
+
+  const { chunks: frameChunks, byteLength } = collectFrameByteChunks(frames || []);
+  pushPackedFloat32Field(3, frameChunks, byteLength, chunks);
+
+  return concatChunks(chunks);
+}
+
+function normalizeFieldName(name) {
+  return String(name || "").trim().toLowerCase();
+}
+
+function buildPlaybackData(buffer) {
+  const decoded = decodeRecording(buffer);
+  const fields = decoded.fields.map(normalizeFieldName);
+  const xIndex = fields.indexOf("x");
+  const yIndex = fields.indexOf("y");
+  const zIndex = fields.indexOf("z");
+  if (xIndex < 0 || yIndex < 0 || zIndex < 0) {
+    throw new Error("Playback data must include x,y,z fields");
+  }
+  const dt = Number.isFinite(decoded.dt) && decoded.dt > 0 ? decoded.dt : currentDt();
+  const stride = decoded.stride > 0 ? decoded.stride : 1;
+  return {
+    meta: decoded.meta,
+    fields,
+    frameCount: decoded.frameCount,
+    agentCount: decoded.agentCount,
+    fieldCount: decoded.fieldCount,
+    states: decoded.states,
+    frameStride: decoded.frameStride,
+    indices: { x: xIndex, y: yIndex, z: zIndex },
+    dt,
+    stride,
+    groups: decoded.meta.groups || [],
+  };
+}
+
+function playbackTimeStep() {
+  if (!playbackData) return 0;
+  return playbackData.dt * playbackData.stride;
+}
+
+function playbackTimeForIndex(index) {
+  return index * playbackTimeStep();
+}
+
+function updatePlaybackStatus() {
+  if (!playbackActive || !playbackData) {
+    if (playbackStatus) playbackStatus.textContent = "No playback";
+    if (playbackSlider) {
+      playbackSlider.disabled = true;
+      playbackSlider.value = "0";
+      playbackSlider.max = "0";
+      playbackSlider.step = "0.001";
+    }
+    updatePlaybackControls();
+    return;
+  }
+  const time = playbackTimeForIndex(playbackIndex);
+  const algoLabel = playbackData.meta?.algorithmId ? ` • ${playbackData.meta.algorithmId}` : "";
+  const planeLabel = playbackData.meta?.plane2d ? " • 2D" : " • 3D";
+  if (playbackStatus) {
+    playbackStatus.textContent = `Playback ${playbackIndex + 1}/${playbackData.frameCount} • t=${time.toFixed(3)}s${algoLabel}${planeLabel}`;
+  }
+  if (playbackTimeInput) {
+    playbackTimeInput.value = String(time.toFixed(3));
+  }
+  if (playbackSlider) {
+    const maxTime = playbackTimeForIndex(playbackData.frameCount - 1);
+    const step = playbackTimeStep();
+    playbackSlider.disabled = false;
+    playbackSlider.max = String(maxTime);
+    playbackSlider.step = String(step > 0 ? step : 0.001);
+    playbackSlider.value = String(time);
+  }
+  updatePlaybackControls();
+}
+
+function applyPlaybackFrame() {
+  if (!playbackActive || !playbackData) return;
+  const { states, frameStride, indices, fieldCount } = playbackData;
+  const count = meshes.length;
+  const frameOffset = playbackIndex * frameStride;
+  for (let i = 0; i < count; i += 1) {
+    const base = frameOffset + i * fieldCount;
+    const x = states[base + indices.x] ?? 0;
+    const y = states[base + indices.y] ?? 0;
+    const z = states[base + indices.z] ?? 0;
+    meshes[i].position.set(x, y, z);
+  }
+}
+
+function enterPlayback(buffer) {
+  playbackData = buildPlaybackData(buffer);
+  playbackActive = true;
+  playbackIndex = 0;
+  setPaused(true);
+  if (recording) setRecording(false);
+  rebuildMeshes();
+  applyGroupColorsToMeshes();
+  renderGroupColors();
+  updateAgentTotal();
+  updatePlaybackStatus();
+}
+
+function clearPlaybackState() {
+  playbackActive = false;
+  playbackData = null;
+  playbackIndex = 0;
+  updatePlaybackStatus();
+  updateAgentTotal();
+}
+
+function exitPlayback() {
+  if (!playbackActive) return;
+  clearPlaybackState();
+  rebuildMeshes();
+  applyGroupColorsToMeshes();
+  renderGroupColors();
+}
+
+function seekPlaybackTime(timeSeconds) {
+  if (!playbackActive || !playbackData) return;
+  const step = playbackTimeStep();
+  if (step <= 0) return;
+  const rawIndex = Math.floor(timeSeconds / step);
+  playbackIndex = Math.min(Math.max(rawIndex, 0), playbackData.frameCount - 1);
+  applyPlaybackFrame();
+  updatePlaybackStatus();
+}
+
+function advancePlaybackFrame() {
+  if (!playbackActive || !playbackData) return;
+  if (playbackIndex < playbackData.frameCount - 1) {
+    playbackIndex += 1;
+  } else {
+    setPaused(true);
+  }
 }
 
 function updateRecordStatus() {
@@ -773,7 +1583,10 @@ function captureFrame(force = false) {
   const stride = recordMeta?.stride || readRecordStride();
   if (!force && recordStep % stride !== 0) return;
   if (typeof sim.states !== "function") return;
-  recordFrames.push(Array.from(sim.states()));
+  const states = sim.states();
+  const frame =
+    states instanceof Float32Array ? states : Float32Array.from(states);
+  recordFrames.push(frame);
   updateRecordStatus();
   const maxFrames = recordMeta?.maxFrames || 0;
   if (maxFrames > 0 && recordFrames.length >= maxFrames) {
@@ -786,19 +1599,101 @@ function downloadRecording() {
   if (!recordMeta) {
     recordMeta = buildRecordMeta();
   }
-  const payload = {
-    meta: recordMeta,
-    frames: recordFrames,
-  };
-  const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
+  const payload = encodeRecording(recordMeta, recordFrames);
+  const blob = new Blob([payload], { type: "application/x-protobuf" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `rphys-history-${Date.now()}.json`;
+  link.download = `rphys-history-${Date.now()}.pb`;
   document.body.appendChild(link);
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+}
+
+function buildSimForExport(modelId, algorithmId, plane2d) {
+  let exportSim = null;
+  try {
+    if (modelId === customModelId) {
+      const cfg = buildCustomConfig(algorithmId);
+      exportSim = WasmSim.newFromConfig(cfg);
+    } else {
+      exportSim = WasmSim.newWithIds(modelId, algorithmId);
+    }
+  } catch (err) {
+    console.error("Failed to create export simulation", err);
+    return null;
+  }
+  if (plane2d && typeof exportSim.set_plane_2d === "function") {
+    exportSim.set_plane_2d(true);
+  }
+  applyAlgorithmParamsToSim(algorithmId, exportSim);
+  return exportSim;
+}
+
+function setFastExportState(running) {
+  fastExportRunning = running;
+  if (!recordFastBtn) return;
+  recordFastBtn.disabled = running;
+  recordFastBtn.textContent = running ? "Exporting..." : "Fast Export (.pb)";
+}
+
+function fastExportRecording() {
+  if (fastExportRunning) return;
+  const targetTime = readFastTime();
+  const stride = readRecordStride();
+  const maxFrames = readRecordMaxFrames();
+  const hasClusters = clusterCountTotal() > 0;
+  const liveModel = activeModelId || currentModelId();
+  const liveAlgo = activeAlgorithmId || currentAlgorithmId(liveModel);
+  const targetModel = sim ? liveModel : (hasClusters ? customModelId : (modelSelect?.value || currentModelId()));
+  const targetAlgo = sim ? liveAlgo : (algorithmSelectPanel?.value || algorithmSelect?.value || currentAlgorithmId(targetModel));
+  const plane2dDesired = panelPlane2dToggle?.checked ?? plane2dToggle?.checked ?? false;
+
+  const exportSim = buildSimForExport(targetModel, targetAlgo, plane2dDesired);
+  if (!exportSim) return;
+  const dt = typeof exportSim.dt === "function" ? exportSim.dt() : 0;
+  const totalSteps = dt > 0 ? Math.ceil(targetTime / dt) : 0;
+
+  setFastExportState(true);
+  try {
+    const frames = [];
+    const initialStates = exportSim.states();
+    frames.push(
+      initialStates instanceof Float32Array ? initialStates : Float32Array.from(initialStates)
+    );
+    if (maxFrames === 0 || frames.length < maxFrames) {
+      for (let step = 1; step <= totalSteps; step += 1) {
+        exportSim.tick();
+        if (step % stride === 0) {
+          const states = exportSim.states();
+          frames.push(states instanceof Float32Array ? states : Float32Array.from(states));
+          if (maxFrames > 0 && frames.length >= maxFrames) {
+            break;
+          }
+        }
+      }
+    }
+
+    const meta = buildRecordMeta({
+      simOverride: exportSim,
+      modelIdOverride: targetModel,
+      algorithmIdOverride: targetAlgo,
+      plane2dOverride: plane2dDesired,
+    });
+    const payload = encodeRecording(meta, frames);
+    const blob = new Blob([payload], { type: "application/x-protobuf" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `rphys-history-fast-${Date.now()}.pb`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  } finally {
+    setFastExportState(false);
+  }
 }
 
 function buildSetupConfig() {
@@ -824,6 +1719,7 @@ function buildSetupConfig() {
       group: Number(c.group || 0),
     })),
     groupColors: groupColorObj,
+    algorithmParams: buildAlgorithmParamsConfig(),
   };
 }
 
@@ -865,6 +1761,10 @@ function applySetupConfig(cfg, runNow) {
     });
   }
 
+  if (cfg.algorithmParams && typeof cfg.algorithmParams === "object") {
+    loadAlgorithmParamsConfig(cfg.algorithmParams);
+  }
+
   const nextClusters = Array.isArray(cfg.clusters)
     ? cfg.clusters.map((c, idx) => normalizeCluster(c, idx))
     : [];
@@ -881,6 +1781,7 @@ function applySetupConfig(cfg, runNow) {
 
   renderClusters();
   renderGroupColors();
+  renderAlgorithmParamsPanel();
 
   if (runNow) {
     resetSimulation(customModelId, algo);
@@ -930,6 +1831,9 @@ function buildCustomConfig(algorithmId) {
 }
 
 function resetSimulation(modelId, algorithmId) {
+  if (playbackActive) {
+    clearPlaybackState();
+  }
   if (recording) {
     setRecording(false);
   }
@@ -972,6 +1876,7 @@ function resetSimulation(modelId, algorithmId) {
   if (plane2dToggle) {
     sim.set_plane_2d(plane2dToggle.checked);
   }
+  applyAlgorithmParamsToSim(actualAlgo);
   rebuildMeshes();
   renderGroupColors();
 }
@@ -1005,6 +1910,30 @@ function openSetup(open) {
   } else {
     setupPanel.classList.remove("is-open");
   }
+}
+
+let activeSetupTab = "initial";
+
+function setSetupTab(tabId) {
+  activeSetupTab = tabId;
+  setupTabButtons.forEach((btn) => {
+    btn.classList.toggle("is-active", btn.dataset.setupTab === tabId);
+  });
+  setupTabContents.forEach((panel) => {
+    panel.classList.toggle("is-active", panel.dataset.setupContent === tabId);
+  });
+  if (tabId === "parameters") {
+    renderAlgorithmParamsPanel();
+  }
+}
+
+if (setupTabButtons.length > 0) {
+  setupTabButtons.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const tabId = btn.dataset.setupTab || "initial";
+      setSetupTab(tabId);
+    });
+  });
 }
 
 if (setupToggleBtn) {
@@ -1128,12 +2057,73 @@ if (recordMaxFramesInput) {
   });
 }
 
+if (recordFastTimeInput) {
+  recordFastTimeInput.addEventListener("input", () => {
+    const time = readFastTime();
+    recordFastTimeInput.value = String(time);
+  });
+}
+
 if (recordDownloadBtn) {
   recordDownloadBtn.addEventListener("click", () => downloadRecording());
 }
 
 if (recordClearBtn) {
   recordClearBtn.addEventListener("click", () => clearRecording());
+}
+
+if (recordFastBtn) {
+  recordFastBtn.addEventListener("click", () => fastExportRecording());
+}
+
+if (playbackLoadBtn && playbackFileInput) {
+  playbackLoadBtn.addEventListener("click", () => {
+    playbackFileInput.value = "";
+    playbackFileInput.click();
+  });
+
+  playbackFileInput.addEventListener("change", () => {
+    const file = playbackFileInput.files && playbackFileInput.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        enterPlayback(reader.result);
+      } catch (err) {
+        console.error("Failed to load playback", err);
+        clearPlaybackState();
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+if (playbackExitBtn) {
+  playbackExitBtn.addEventListener("click", () => exitPlayback());
+}
+
+if (playbackSeekBtn) {
+  playbackSeekBtn.addEventListener("click", () => {
+    const time = Number(playbackTimeInput?.value) || 0;
+    setPaused(true);
+    seekPlaybackTime(time);
+  });
+}
+
+if (playbackGoBtn) {
+  playbackGoBtn.addEventListener("click", () => {
+    if (!playbackActive) return;
+    setPaused(!paused);
+  });
+}
+
+if (playbackSlider) {
+  playbackSlider.addEventListener("input", () => {
+    if (!playbackActive) return;
+    const time = Number(playbackSlider.value) || 0;
+    setPaused(true);
+    seekPlaybackTime(time);
+  });
 }
 
 // Initialize selects to custom model so setup matches initial spawn.
@@ -1144,6 +2134,8 @@ refreshAlgorithmSelect(customModelId, algorithmSelectPanel?.value || algorithmSe
 syncAlgorithmSelects(algorithmSelectPanel?.value || algorithmSelect?.value || currentAlgorithmId(customModelId));
 renderClusters();
 resetSimulation(customModelId, currentAlgorithmId(customModelId));
+renderAlgorithmParamsPanel();
+setSetupTab(activeSetupTab);
 updateRecordStatus();
 
 const raycaster = new THREE.Raycaster();
@@ -1226,6 +2218,7 @@ function pickBoid() {
 }
 
 function startDrag(event, isPointer) {
+  if (playbackActive) return;
   if (event.button !== 0) return;
   if (panning || orbiting) return;
   if (isPointer && event.isPrimary === false) return;
@@ -1444,11 +2437,11 @@ function renderGizmo() {
 }
 
 function animate() {
-  if (!sim) {
+  if (!sim && !playbackActive) {
     requestAnimationFrame(animate);
     return;
   }
-  if (dragging && dragIndex !== null) {
+  if (!playbackActive && sim && dragging && dragIndex !== null) {
     sim.set_position_and_velocity(
       dragIndex,
       dragTarget.x,
@@ -1461,14 +2454,18 @@ function animate() {
   }
 
   if (!paused) {
-    sim.tick();
-    if (recording) {
-      recordStep += 1;
-      captureFrame();
+    if (playbackActive) {
+      advancePlaybackFrame();
+    } else if (sim) {
+      sim.tick();
+      if (recording) {
+        recordStep += 1;
+        captureFrame();
+      }
     }
   }
 
-  if (dragging && dragIndex !== null) {
+  if (!playbackActive && sim && dragging && dragIndex !== null) {
     sim.set_position_and_velocity(
       dragIndex,
       dragTarget.x,
@@ -1480,15 +2477,20 @@ function animate() {
     );
   }
 
-  const positions = sim.positions();
-  const count = meshes.length;
-  for (let i = 0; i < count; i += 1) {
-    const base = i * 3;
-    meshes[i].position.set(
-      positions[base + 0],
-      positions[base + 1],
-      positions[base + 2]
-    );
+  if (playbackActive) {
+    applyPlaybackFrame();
+    updatePlaybackStatus();
+  } else if (sim) {
+    const positions = sim.positions();
+    const count = meshes.length;
+    for (let i = 0; i < count; i += 1) {
+      const base = i * 3;
+      meshes[i].position.set(
+        positions[base + 0],
+        positions[base + 1],
+        positions[base + 2]
+      );
+    }
   }
 
   renderer.getSize(gizmoViewportSize);
