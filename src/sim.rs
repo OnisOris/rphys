@@ -135,6 +135,8 @@ impl Simulator {
     pub fn dt(&self) -> f64 { self.dt }
     pub fn set_dt(&mut self, dt: f64) { self.dt = dt; }
     pub(crate) fn groups(&self) -> &[usize] { &self.groups }
+    pub(crate) fn masses(&self) -> &[f64] { &self.mass }
+    pub(crate) fn drags(&self) -> &[f64] { &self.drag }
 
     /// Получить матрицу состояний Nx6 (x,y,z,vx,vy,vz)
     pub fn state_matrix(&self) -> Vec<[f64; 6]> {

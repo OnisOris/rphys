@@ -1,16 +1,24 @@
 use crate::algorithms::flocking::{FlockParams, Flocking};
 use crate::algorithms::flocking_alpha::{FlockAlphaParams, FlockingAlpha};
-use crate::models::particles::{lattice_demo_configs, ring_demo_configs, ParticleModel, DEMO_COUNT, DEMO_DT};
+use crate::algorithms::formation_ecbf::{FormationEcbf, FormationEcbfParams};
+use crate::algorithms::safe_flocking_alpha::{SafeFlockAlphaParams, SafeFlockingAlpha};
+use crate::models::particles::{
+    lattice_demo_configs, quadrotor_demo_configs, ring_demo_configs, ParticleModel, DEMO_COUNT,
+    DEMO_DT,
+};
 use crate::BodyConfig;
 use nalgebra::Vector3;
 
 pub const MODEL_RING: &str = "ring-swarm";
 pub const MODEL_LATTICE: &str = "lattice-swarm";
+pub const MODEL_QUADROTOR: &str = "quadrotor-swarm";
 pub const MODEL_FROM_STATES: &str = "from-states";
 
 pub const ALGO_NONE: &str = "none";
 pub const ALGO_FLOCKING: &str = "flocking";
 pub const ALGO_FLOCKING_ALPHA: &str = "flocking-alpha";
+pub const ALGO_FORMATION_ECBF: &str = "formation-ecbf";
+pub const ALGO_SAFE_FLOCKING_ALPHA: &str = "safe-flocking-alpha";
 
 pub struct ModelInfo {
     pub id: &'static str,
@@ -41,6 +49,12 @@ pub fn model_catalog() -> &'static [ModelInfo] {
             default_algorithm: ALGO_FLOCKING,
         },
         ModelInfo {
+            id: MODEL_QUADROTOR,
+            name: "Quadrotor formation",
+            description: "4-agent quadrotor formation demo (paper defaults).",
+            default_algorithm: ALGO_FORMATION_ECBF,
+        },
+        ModelInfo {
             id: MODEL_FROM_STATES,
             name: "Custom/Clusters",
             description: "Build model from custom agents or generated clusters.",
@@ -69,6 +83,23 @@ pub fn algorithm_catalog() -> &'static [AlgorithmInfo] {
             description: "Alpha-lattice shaping + velocity consensus (Olfati-Saber style).",
             compatible_models: &[MODEL_RING, MODEL_LATTICE, MODEL_FROM_STATES],
         },
+        AlgorithmInfo {
+            id: ALGO_FORMATION_ECBF,
+            name: "Fixed-time formation + ECBF",
+            description: "Fixed-time formation tracking with robust ECBF obstacle avoidance.",
+            compatible_models: &[
+                MODEL_RING,
+                MODEL_LATTICE,
+                MODEL_QUADROTOR,
+                MODEL_FROM_STATES,
+            ],
+        },
+        AlgorithmInfo {
+            id: ALGO_SAFE_FLOCKING_ALPHA,
+            name: "Safe flocking (alpha + CBF-QP)",
+            description: "Alpha-lattice nominal flocking filtered by CBF-QP (obstacles + inter-agent).",
+            compatible_models: &[MODEL_RING, MODEL_LATTICE, MODEL_FROM_STATES],
+        },
     ]
 }
 
@@ -80,6 +111,8 @@ enum AlgorithmKind {
     None,
     Flocking(Flocking),
     FlockingAlpha(FlockingAlpha),
+    FormationEcbf(FormationEcbf),
+    SafeFlockingAlpha(SafeFlockingAlpha),
 }
 
 pub struct Engine {
@@ -171,6 +204,26 @@ impl Engine {
                 }
             }
             (ModelKind::Particles(model), AlgorithmKind::FlockingAlpha(algo)) => {
+                if self.plane_2d {
+                    model.flatten_to_plane();
+                }
+                algo.apply(model, self.plane_2d);
+                model.step();
+                if self.plane_2d {
+                    model.flatten_to_plane();
+                }
+            }
+            (ModelKind::Particles(model), AlgorithmKind::FormationEcbf(algo)) => {
+                if self.plane_2d {
+                    model.flatten_to_plane();
+                }
+                algo.apply(model, self.plane_2d);
+                model.step();
+                if self.plane_2d {
+                    model.flatten_to_plane();
+                }
+            }
+            (ModelKind::Particles(model), AlgorithmKind::SafeFlockingAlpha(algo)) => {
                 if self.plane_2d {
                     model.flatten_to_plane();
                 }
@@ -305,12 +358,91 @@ impl Engine {
             _ => Err("current algorithm does not support flocking-alpha params".to_string()),
         }
     }
+
+    pub fn set_formation_ecbf_params(&mut self, params: FormationEcbfParams) -> Result<(), String> {
+        match &mut self.algorithm {
+            AlgorithmKind::FormationEcbf(algo) => {
+                algo.params = params;
+                Ok(())
+            }
+            _ => Err("current algorithm does not support formation-ecbf params".to_string()),
+        }
+    }
+
+    pub fn set_safe_flocking_alpha_params(&mut self, params: SafeFlockAlphaParams) -> Result<(), String> {
+        match &mut self.algorithm {
+            AlgorithmKind::SafeFlockingAlpha(algo) => {
+                algo.params = params;
+                Ok(())
+            }
+            _ => Err("current algorithm does not support safe-flocking-alpha params".to_string()),
+        }
+    }
+
+    pub fn attitudes_flat(&self) -> Vec<f32> {
+        match &self.algorithm {
+            AlgorithmKind::FormationEcbf(algo) => algo.attitudes_flat(),
+            _ => Vec::new(),
+        }
+    }
+
+    pub fn reset_agent(&mut self, index: usize, pos: Vector3<f64>, vel: Vector3<f64>) {
+        match &mut self.algorithm {
+            AlgorithmKind::FormationEcbf(algo) => algo.reset_agent(index, pos, vel),
+            _ => {}
+        }
+    }
+
+    pub fn debug_states_flat(&self) -> Vec<f32> {
+        match (&self.model, &self.algorithm) {
+            (ModelKind::Particles(model), AlgorithmKind::SafeFlockingAlpha(algo)) => {
+                let states = model.state_matrix();
+                let dbg = algo.debug_flat();
+                let n = states.len();
+                if n == 0 {
+                    return Vec::new();
+                }
+                // On the very first frame (before any tick/apply), the algorithm may not have
+                // initialized its internal buffers yet. Avoid panicking on a short debug buffer.
+                let dbg_ok = dbg.len() == n * 9;
+                // Per-agent: 6 state + 9 debug.
+                let mut out = Vec::with_capacity(n * 15);
+                for i in 0..n {
+                    let s = states[i];
+                    out.push(s[0] as f32);
+                    out.push(s[1] as f32);
+                    out.push(s[2] as f32);
+                    out.push(s[3] as f32);
+                    out.push(s[4] as f32);
+                    out.push(s[5] as f32);
+                    if dbg_ok {
+                        let base = i * 9;
+                        out.push(dbg[base + 0]);
+                        out.push(dbg[base + 1]);
+                        out.push(dbg[base + 2]);
+                        out.push(dbg[base + 3]);
+                        out.push(dbg[base + 4]);
+                        out.push(dbg[base + 5]);
+                        out.push(dbg[base + 6]);
+                        out.push(dbg[base + 7]);
+                        out.push(dbg[base + 8]);
+                    } else {
+                        // unx,uny,unz, ux,uy,uz, slack, active, constraints
+                        out.extend_from_slice(&[0.0; 9]);
+                    }
+                }
+                out
+            }
+            _ => self.state_matrix_flat(),
+        }
+    }
 }
 
 fn normalize_model_id(id: &str) -> Option<&'static str> {
     match id {
         MODEL_RING => Some(MODEL_RING),
         MODEL_LATTICE => Some(MODEL_LATTICE),
+        MODEL_QUADROTOR => Some(MODEL_QUADROTOR),
         MODEL_FROM_STATES => Some(MODEL_FROM_STATES),
         _ => None,
     }
@@ -321,6 +453,8 @@ fn normalize_algorithm_id(id: &str) -> Option<&'static str> {
         ALGO_NONE => Some(ALGO_NONE),
         ALGO_FLOCKING => Some(ALGO_FLOCKING),
         ALGO_FLOCKING_ALPHA => Some(ALGO_FLOCKING_ALPHA),
+        ALGO_FORMATION_ECBF => Some(ALGO_FORMATION_ECBF),
+        ALGO_SAFE_FLOCKING_ALPHA => Some(ALGO_SAFE_FLOCKING_ALPHA),
         _ => None,
     }
 }
@@ -342,6 +476,12 @@ fn build_algorithm(id: &'static str, model_id: &'static str) -> Result<Algorithm
         ALGO_FLOCKING_ALPHA => Ok(AlgorithmKind::FlockingAlpha(FlockingAlpha::new(
             FlockAlphaParams::default(),
         ))),
+        ALGO_FORMATION_ECBF => Ok(AlgorithmKind::FormationEcbf(FormationEcbf::new(
+            FormationEcbfParams::default(),
+        ))),
+        ALGO_SAFE_FLOCKING_ALPHA => Ok(AlgorithmKind::SafeFlockingAlpha(SafeFlockingAlpha::new(
+            SafeFlockAlphaParams::default(),
+        ))),
         _ => Err(format!("unknown algorithm id '{}'", id)),
     }
 }
@@ -357,6 +497,11 @@ fn build_model(model_id: &'static str) -> Result<(ModelKind, &'static str), Stri
             let configs = lattice_demo_configs(3);
             let model = ParticleModel::new(configs, DEMO_DT);
             Ok((ModelKind::Particles(model), ALGO_FLOCKING))
+        }
+        MODEL_QUADROTOR => {
+            let configs = quadrotor_demo_configs();
+            let model = ParticleModel::new(configs, DEMO_DT);
+            Ok((ModelKind::Particles(model), ALGO_FORMATION_ECBF))
         }
         MODEL_FROM_STATES => Err("from-states must be constructed with explicit state array".to_string()),
         _ => Err(format!("unknown model id '{}'", model_id)),

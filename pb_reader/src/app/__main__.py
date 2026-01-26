@@ -30,6 +30,62 @@ FLOCK_ALPHA_PARAM_FALLBACKS = {
     "desired_distance": 1.4,
 }
 
+@dataclass(frozen=True)
+class ObstaclePoly:
+    """p(t) = a2 * t^2 + a1 * t + a0"""
+
+    a2: np.ndarray
+    a1: np.ndarray
+    a0: np.ndarray
+    d: float
+
+    def pos(self, t: np.ndarray) -> np.ndarray:
+        t = np.asarray(t, dtype=np.float64)
+        t2 = t * t
+        return self.a2[None, :] * t2[:, None] + self.a1[None, :] * t[:, None] + self.a0[None, :]
+
+
+def paper_obstacles() -> list[ObstaclePoly]:
+    return [
+        ObstaclePoly(
+            a2=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+            a1=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+            a0=np.array([47.0, 86.0, 10.0], dtype=np.float64),
+            d=5.0,
+        ),
+        ObstaclePoly(
+            a2=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+            a1=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+            a0=np.array([52.0, 78.0, 9.0], dtype=np.float64),
+            d=4.0,
+        ),
+        ObstaclePoly(
+            a2=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+            a1=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+            a0=np.array([43.0, 82.0, 61.5], dtype=np.float64),
+            d=5.0,
+        ),
+        ObstaclePoly(
+            a2=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+            a1=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+            a0=np.array([49.0, 75.0, 60.5], dtype=np.float64),
+            d=5.5,
+        ),
+        # moving obstacle: p = [95 - 0.06t, 15 + 0.001 t^2, 100 - 0.089 t]
+        ObstaclePoly(
+            a2=np.array([0.0, 0.001, 0.0], dtype=np.float64),
+            a1=np.array([-0.06, 0.0, -0.089], dtype=np.float64),
+            a0=np.array([95.0, 15.0, 100.0], dtype=np.float64),
+            d=3.0,
+        ),
+        ObstaclePoly(
+            a2=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+            a1=np.array([0.0, 0.0, 0.0], dtype=np.float64),
+            a0=np.array([69.0, 83.0, 124.5], dtype=np.float64),
+            d=6.0,
+        ),
+    ]
+
 
 @dataclass
 class RecordMeta:
@@ -367,6 +423,15 @@ def resolve_metric_params(
     meta_params = recording.meta.algorithm_params or {}
     if neighbor_radius is None:
         neighbor_radius = meta_params.get("neighbor_radius")
+    try:
+        if neighbor_radius is not None and (not math.isfinite(float(neighbor_radius)) or float(neighbor_radius) <= 0):
+            print(
+                f"Предупреждение: neighbor_radius={neighbor_radius} в метаданных некорректен, игнорирую",
+                file=sys.stderr,
+            )
+            neighbor_radius = None
+    except Exception:
+        neighbor_radius = None
     if neighbor_radius is None and recording.meta.algorithm_id == "flocking":
         neighbor_radius = FLOCK_PARAM_FALLBACKS.get("neighbor_radius")
         print(
@@ -381,6 +446,13 @@ def resolve_metric_params(
             f"использую {neighbor_radius}",
             file=sys.stderr,
         )
+    if neighbor_radius is None:
+        neighbor_radius = FLOCK_ALPHA_PARAM_FALLBACKS.get("neighbor_radius")
+        print(
+            "Предупреждение: neighbor_radius не найден для алгоритма "
+            f"'{recording.meta.algorithm_id}', использую {neighbor_radius}",
+            file=sys.stderr,
+        )
     if neighbor_radius is None or neighbor_radius <= 0:
         raise ProtoError("neighbor_radius не задан или <= 0")
 
@@ -390,6 +462,15 @@ def resolve_metric_params(
         desired_distance = meta_params.get("separation_radius")
     if desired_distance is None:
         desired_distance = meta_params.get("neighbor_radius")
+    try:
+        if desired_distance is not None and (not math.isfinite(float(desired_distance)) or float(desired_distance) <= 0):
+            print(
+                f"Предупреждение: desired_distance={desired_distance} в метаданных некорректен, игнорирую",
+                file=sys.stderr,
+            )
+            desired_distance = None
+    except Exception:
+        desired_distance = None
     if desired_distance is None and recording.meta.algorithm_id == "flocking":
         desired_distance = FLOCK_PARAM_FALLBACKS.get("separation_radius")
         print(
@@ -402,6 +483,13 @@ def resolve_metric_params(
         print(
             "Предупреждение: desired_distance не найден, "
             f"использую {desired_distance}",
+            file=sys.stderr,
+        )
+    if desired_distance is None:
+        desired_distance = FLOCK_ALPHA_PARAM_FALLBACKS.get("desired_distance")
+        print(
+            "Предупреждение: desired_distance не найден для алгоритма "
+            f"'{recording.meta.algorithm_id}', использую {desired_distance}",
             file=sys.stderr,
         )
     if desired_distance is None or desired_distance <= 0:
@@ -497,6 +585,126 @@ def compute_flock_metrics(
     }
 
 
+def resolve_safety_params(
+    recording: Recording, agent_safe_distance: float | None, scenario: str | None
+) -> tuple[float, list[ObstaclePoly] | None]:
+    meta_params = recording.meta.algorithm_params or {}
+    d_safe = agent_safe_distance
+    if d_safe is None:
+        d_safe = meta_params.get("agent_safe_distance")
+    if d_safe is None:
+        d_safe = meta_params.get("separation_radius")
+    if d_safe is None:
+        d_safe = meta_params.get("desired_distance")
+    if d_safe is None:
+        d_safe = FLOCK_PARAM_FALLBACKS.get("separation_radius")
+        print(
+            f"Предупреждение: agent_safe_distance не найден, использую {d_safe}",
+            file=sys.stderr,
+        )
+    try:
+        d_safe = float(d_safe)
+    except Exception as exc:
+        raise ProtoError(f"agent_safe_distance не число ({exc})")
+    if not math.isfinite(d_safe) or d_safe <= 0:
+        raise ProtoError("agent_safe_distance не задан или <= 0")
+
+    mode = (scenario or "auto").strip().lower()
+    if mode not in ("auto", "paper", "none"):
+        raise ProtoError("scenario должен быть auto|paper|none")
+    obstacles = None
+    if mode == "paper":
+        obstacles = paper_obstacles()
+    elif mode == "auto":
+        if recording.meta.algorithm_id in ("formation-ecbf", "safe-flocking-alpha"):
+            obstacles = paper_obstacles()
+    return d_safe, obstacles
+
+
+def compute_control_metrics(recording: Recording) -> dict[str, np.ndarray]:
+    fields = recording.fields
+    idx = {name: field_index(fields, name) for name in (
+        "unx", "uny", "unz", "ux", "uy", "uz", "slack", "active", "constraints"
+    )}
+    missing = [k for k, v in idx.items() if v is None]
+    if missing:
+        return {}
+
+    un = recording.states[:, :, [idx["unx"], idx["uny"], idx["unz"]]]
+    u = recording.states[:, :, [idx["ux"], idx["uy"], idx["uz"]]]
+    du = u - un
+    du_norm = np.linalg.norm(du, axis=2)
+
+    slack = recording.states[:, :, idx["slack"]]
+    active = recording.states[:, :, idx["active"]]
+    total = recording.states[:, :, idx["constraints"]]
+
+    denom = np.sum(total, axis=1)
+    active_frac = np.zeros(recording.frame_count, dtype=np.float64)
+    mask = denom > 0
+    active_frac[mask] = np.sum(active, axis=1)[mask] / denom[mask]
+
+    return {
+        "t": recording.time,
+        "u_dev_mean": np.mean(du_norm, axis=1),
+        "u_dev_max": np.max(du_norm, axis=1),
+        "slack_mean": np.mean(slack, axis=1),
+        "slack_max": np.max(slack, axis=1),
+        "active_frac": active_frac,
+    }
+
+
+def compute_safety_metrics(
+    recording: Recording, agent_safe_distance: float, obstacles: list[ObstaclePoly] | None
+) -> dict[str, np.ndarray]:
+    positions, _, dim = extract_state_vectors(recording)
+    frame_count = recording.frame_count
+    agent_count = recording.agent_count
+    if agent_count <= 1:
+        return {}
+
+    d_safe = float(agent_safe_distance)
+    d_safe2 = d_safe * d_safe
+
+    min_pair_clearance = np.zeros(frame_count, dtype=np.float64)
+    pair_violations = np.zeros(frame_count, dtype=np.float64)
+
+    for frame in range(frame_count):
+        pos = positions[frame]  # (N,dim)
+        g = pos @ pos.T
+        sq = np.sum(pos * pos, axis=1)
+        d2 = sq[:, None] + sq[None, :] - 2.0 * g
+        d2[d2 < 0] = 0.0
+        np.fill_diagonal(d2, np.inf)
+        min_d2 = float(np.min(d2))
+        min_pair_clearance[frame] = math.sqrt(min_d2) - d_safe
+        pair_violations[frame] = float(np.sum(np.triu(d2 < d_safe2, 1)))
+
+    out: dict[str, np.ndarray] = {
+        "t": recording.time,
+        "min_pair_clearance": min_pair_clearance,
+        "pair_violations": pair_violations,
+    }
+
+    if obstacles:
+        time = recording.time
+        min_ob_clearance = np.full(frame_count, math.inf, dtype=np.float64)
+        ob_violations = np.zeros(frame_count, dtype=np.float64)
+
+        for ob in obstacles:
+            p_ob = ob.pos(time)[:, :dim]
+            diff = positions - p_ob[:, None, :]
+            dist = np.linalg.norm(diff, axis=2)
+            clearance = dist - float(ob.d)
+            min_ob_clearance = np.minimum(min_ob_clearance, np.min(clearance, axis=1))
+            ob_violations += np.sum(clearance < 0.0, axis=1).astype(np.float64)
+
+        out["min_obstacle_clearance"] = min_ob_clearance
+        out["obstacle_violations"] = ob_violations
+
+    return out
+
+
 def print_info(path: Path, recording: Recording) -> None:
     meta = recording.meta
     print(f"Файл: {path}")
@@ -546,6 +754,22 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="Построить метрики флокинга: C(t), R(t), E~(t), K~(t)",
     )
     parser.add_argument(
+        "--split-metrics",
+        action="store_true",
+        help="Сохранить каждую метрику отдельным графиком (требует --metrics)",
+    )
+    parser.add_argument(
+        "--out-dir",
+        type=Path,
+        default=None,
+        help="Папка для сохранения графиков (по умолчанию рядом с .pb)",
+    )
+    parser.add_argument(
+        "--prefix",
+        default=None,
+        help="Префикс имён файлов при --split-metrics (по умолчанию stem файла .pb)",
+    )
+    parser.add_argument(
         "--neighbor-radius",
         type=float,
         default=None,
@@ -558,12 +782,82 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="Желаемая дистанция d, м (для E~(t))",
     )
     parser.add_argument(
+        "--agent-safe-distance",
+        type=float,
+        default=None,
+        help="Безопасная дистанция между агентами d_safe, м (для safety-метрик)",
+    )
+    parser.add_argument(
+        "--scenario",
+        default="auto",
+        help="Сценарий препятствий для safety-метрик: auto|paper|none",
+    )
+    parser.add_argument(
         "--info", action="store_true", help="Показать метаданные и выйти"
     )
     parser.add_argument(
         "--list-axes", action="store_true", help="Показать доступные оси и выйти"
     )
     return parser.parse_args(argv)
+
+
+def ensure_dir(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+
+
+def save_metric_plot(
+    *,
+    out_path: Path,
+    t: np.ndarray,
+    y: np.ndarray,
+    title: str,
+    ylabel: str,
+    zero_line: bool,
+    dpi: int,
+) -> None:
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots(figsize=(9, 5.4))
+    ax.plot(t, y, linewidth=1.6)
+    ax.set_title(title)
+    ax.set_xlabel("время, с")
+    ax.set_ylabel(ylabel)
+    ax.grid(True, alpha=0.3)
+    if zero_line:
+        ax.axhline(0.0, color="#ff6b6b", linewidth=1.2, alpha=0.5)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=dpi)
+    plt.close(fig)
+
+
+def save_split_metric_plots(
+    *,
+    file_path: Path,
+    out_dir: Path | None,
+    prefix: str | None,
+    dpi: int,
+    plots: list[tuple[str, str, str, np.ndarray, bool]],
+    t: np.ndarray,
+) -> Path:
+    # Default next to input .pb so results stay with the experiment.
+    target_dir = out_dir or (file_path.parent / f"{file_path.stem}-plots")
+    ensure_dir(target_dir)
+    name_prefix = prefix or file_path.stem
+
+    for key, title, ylabel, series, zero_line in plots:
+        safe_key = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in key)
+        out_path = target_dir / f"{name_prefix}-{safe_key}.png"
+        save_metric_plot(
+            out_path=out_path,
+            t=t,
+            y=series,
+            title=title,
+            ylabel=ylabel,
+            zero_line=zero_line,
+            dpi=dpi,
+        )
+
+    return target_dir
 
 
 def configure_matplotlib(out_path: Path | None) -> None:
@@ -724,27 +1018,69 @@ def main(argv: list[str] | None = None) -> None:
             neighbor_radius if neighbor_radius is not None else 0.0,
             desired_distance if desired_distance is not None else 0.0,
         )
-        fig, axes = plt.subplots(2, 2, figsize=(10, 7), sharex=True)
-        axes = axes.ravel()
-        axes[0].plot(metrics["t"], metrics["C"], linewidth=1.4)
-        axes[0].set_title("Связность")
-        axes[0].set_ylabel("C(t), доля")
+        d_safe, obstacles = resolve_safety_params(
+            recording, args.agent_safe_distance, args.scenario
+        )
+        safety = compute_safety_metrics(recording, d_safe, obstacles)
+        control = compute_control_metrics(recording)
 
-        axes[1].plot(metrics["t"], metrics["R"], linewidth=1.4)
-        axes[1].set_title("Радиус когезии")
-        axes[1].set_ylabel("R(t), м")
+        plots: list[tuple[str, str, str, np.ndarray, bool]] = []
+        plots.append(("C", "Связность", "C(t), доля", metrics["C"], False))
+        plots.append(("R", "Радиус когезии", "R(t), м", metrics["R"], False))
+        plots.append(("E", "Отклонение решетки", "E~(t), безразм.", metrics["E"], False))
+        plots.append(("K", "Несогласованность скоростей", "K~(t), м^2/с^2", metrics["K"], False))
 
-        axes[2].plot(metrics["t"], metrics["E"], linewidth=1.4)
-        axes[2].set_title("Отклонение решетки")
-        axes[2].set_ylabel("E~(t), безразм.")
+        if safety:
+            plots.append(
+                ("d_agents", "Мин. клиренс агент-агент", "min(d_ij - d_safe), м", safety["min_pair_clearance"], True)
+            )
+            plots.append(
+                ("viol_agents", "Нарушения агент-агент", "пар (d_ij < d_safe)", safety["pair_violations"], False)
+            )
+            if "min_obstacle_clearance" in safety:
+                plots.append(
+                    ("d_obs", "Мин. клиренс до препятствий", "min(d_i - d_ob), м", safety["min_obstacle_clearance"], True)
+                )
+                plots.append(
+                    ("viol_obs", "Нарушения препятствий", "пар (d_i < d_ob)", safety["obstacle_violations"], False)
+                )
 
-        axes[3].plot(metrics["t"], metrics["K"], linewidth=1.4)
-        axes[3].set_title("Несогласованность скоростей")
-        axes[3].set_ylabel("K~(t), м^2/с^2")
+        if control:
+            plots.append(("u_dev", "Отклонение управления", "mean ||u*-u_n||", control["u_dev_mean"], False))
+            plots.append(("slack", "Slack", "mean slack", control["slack_mean"], False))
+            plots.append(("active", "Активные ограничения", "sum(active)/sum(total)", control["active_frac"], False))
 
-        for ax in axes:
+        if args.split_metrics:
+            # Always save; avoid opening interactive windows.
+            out_dir = save_split_metric_plots(
+                file_path=args.file,
+                out_dir=args.out_dir,
+                prefix=args.prefix,
+                dpi=args.dpi,
+                plots=plots,
+                t=metrics["t"],
+            )
+            print(f"Сохранено: {out_dir}")
+            return
+
+        cols = 2 if len(plots) <= 6 else 3
+        rows = int(math.ceil(len(plots) / cols))
+        fig, axes = plt.subplots(rows, cols, figsize=(5.2 * cols, 3.0 * rows), sharex=True)
+        axes = np.array(axes).ravel()
+
+        t = metrics["t"]
+        for idx, (_, title, ylabel, series, zero_line) in enumerate(plots):
+            ax = axes[idx]
+            ax.plot(t, series, linewidth=1.4)
+            ax.set_title(title)
+            ax.set_ylabel(ylabel)
+            if zero_line:
+                ax.axhline(0.0, color="#ff6b6b", linewidth=1.0, alpha=0.45)
             ax.set_xlabel("время, с")
             ax.grid(True, alpha=0.3)
+
+        for ax in axes[len(plots):]:
+            ax.axis("off")
 
         if args.title:
             fig.suptitle(args.title)

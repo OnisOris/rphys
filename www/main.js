@@ -7,8 +7,23 @@ const { WasmSim, available_models, available_algorithms, algorithms_for_model } 
   rphysWasm;
 const flocking_defaults = rphysWasm.flocking_defaults;
 const flocking_alpha_defaults = rphysWasm.flocking_alpha_defaults;
+const formation_ecbf_defaults = rphysWasm.formation_ecbf_defaults;
+const safe_flocking_alpha_defaults = rphysWasm.safe_flocking_alpha_defaults;
 
-const defaultStateFields = ["x", "y", "z", "vx", "vy", "vz"];
+const RECORD_FIELDS_BASE = ["x", "y", "z", "vx", "vy", "vz"];
+const RECORD_FIELDS_SAFE_FLOCKING = [
+  ...RECORD_FIELDS_BASE,
+  "unx",
+  "uny",
+  "unz",
+  "ux",
+  "uy",
+  "uz",
+  "slack",
+  "active",
+  "constraints",
+];
+const defaultStateFields = RECORD_FIELDS_BASE;
 const fallbackFlockParams = {
   neighbor_radius: 2.6,
   separation_radius: 0.9,
@@ -52,6 +67,124 @@ const flockAlphaParamDefaults = buildFlockAlphaParamsDefaults(
   fallbackFlockAlphaParams
 );
 
+const fallbackFormationEcbfParams = {
+  k1: 2.0,
+  k2: 3.0,
+  gamma1: 0.5,
+  gamma2: 0.5,
+  m1: 1.0,
+  m2: 2.0,
+  obs_k1: 1.0,
+  obs_k2: 1.0,
+  obs_k3: 2.0,
+  obs_a1: 2.0,
+  obs_a2: 1.0,
+  obs_b1: 1.0,
+  obs_b2: 2.0,
+  do_kappa1: 4.0,
+  do_kappa2: 2.0,
+  do_kappa3: 3.0,
+  do_eta1: 1.5,
+  do_eta2: 1.5,
+  do_eta3: 0.5,
+  do_n1: 0.5,
+  do_n2: 1.5,
+  delta_theta: 0.2,
+  delta2_star: 0.0,
+  lambda1: 2.0,
+  lambda2: 2.0,
+  gravity: 9.81,
+  desired_yaw: 0.0,
+  smooth_eps: 0.01,
+  mu_dot_filter: 0.8,
+  alpha_dot_filter: 0.8,
+  u_min: [-6.0, -6.0, 0.0],
+  u_max: [6.0, 6.0, 20.0],
+  qp_iters: 12,
+  obstacles: [
+    { a2: [0, 0, 0], a1: [0, 0, 0], a0: [47, 86, 10], d: 5 },
+    { a2: [0, 0, 0], a1: [0, 0, 0], a0: [52, 78, 9], d: 4 },
+    { a2: [0, 0, 0], a1: [0, 0, 0], a0: [43, 82, 61.5], d: 5 },
+    { a2: [0, 0, 0], a1: [0, 0, 0], a0: [49, 75, 60.5], d: 5.5 },
+    { a2: [0, 0.001, 0], a1: [-0.06, 0, -0.089], a0: [95, 15, 100], d: 3 },
+    { a2: [0, 0, 0], a1: [0, 0, 0], a0: [69, 83, 124.5], d: 6 },
+  ],
+  formation_offsets: [
+    [-3, 3, 0],
+    [-3, -3, 0],
+    [3, 3, 0],
+    [3, -3, 0],
+  ],
+  auto_offsets: true,
+  adjacency: [
+    [0, 0, 1, 0],
+    [0, 0, 1, 1],
+    [1, 1, 0, 0],
+    [0, 1, 0, 0],
+  ],
+  leader_links: [1, 1, 0, 0],
+  leader: { kind: "circle", center: [0, 0, 0], radius: 6, omega: 0.2 },
+  leader_time_scale: 1.0,
+  leader_paused: false,
+  use_moving_obstacle_terms: true,
+};
+
+const rawFormationDefaults =
+  typeof formation_ecbf_defaults === "function" ? formation_ecbf_defaults() : null;
+const formationEcbfParamDefaults = normalizeFormationEcbfParams(
+  rawFormationDefaults,
+  fallbackFormationEcbfParams
+);
+
+const fallbackSafeFlockingAlphaParams = {
+  neighbor_radius: 2.6,
+  desired_distance: 1.4,
+  sigma_eps: 0.1,
+  bump_h: 0.2,
+  phi_a: 5.0,
+  phi_b: 5.0,
+  alpha_weight: 1.0,
+  alignment_weight: 0.65,
+  boundary_radius: 6.0,
+  boundary_weight: 0.8,
+  max_speed: 2.4,
+  max_force: 1.6,
+  speed_limit: 2.0,
+  use_obstacles: true,
+  use_agent_cbf: true,
+  agent_safe_distance: 0.9,
+  cbf_neighbor_radius: 2.6,
+  lambda1: 2.0,
+  lambda2: 2.0,
+  delta_theta: 0.2,
+  delta2_star: 0.0,
+  use_moving_obstacle_terms: true,
+  two_pass: false,
+  u_min: [-6.0, -6.0, -6.0],
+  u_max: [6.0, 6.0, 6.0],
+  slack_weight: 50.0,
+  slack_max: 50.0,
+  smooth_eps: 0.01,
+  qp_iters: 14,
+  obstacles: [
+    { a2: [0, 0, 0], a1: [0, 0, 0], a0: [47, 86, 10], d: 5 },
+    { a2: [0, 0, 0], a1: [0, 0, 0], a0: [52, 78, 9], d: 4 },
+    { a2: [0, 0, 0], a1: [0, 0, 0], a0: [43, 82, 61.5], d: 5 },
+    { a2: [0, 0, 0], a1: [0, 0, 0], a0: [49, 75, 60.5], d: 5.5 },
+    { a2: [0, 0.001, 0], a1: [-0.06, 0, -0.089], a0: [95, 15, 100], d: 3 },
+    { a2: [0, 0, 0], a1: [0, 0, 0], a0: [69, 83, 124.5], d: 6 },
+  ],
+};
+
+const rawSafeFlockingAlphaDefaults =
+  typeof safe_flocking_alpha_defaults === "function"
+    ? safe_flocking_alpha_defaults()
+    : null;
+const safeFlockingAlphaParamDefaults = normalizeFormationEcbfParams(
+  rawSafeFlockingAlphaDefaults,
+  fallbackSafeFlockingAlphaParams
+);
+
 const algorithmParamDefinitions = {
   flocking: {
     label: "Flocking",
@@ -86,11 +219,80 @@ const algorithmParamDefinitions = {
       { key: "speed_limit", label: "Speed limit gain (1/s)", step: 0.1, min: 0 },
     ],
   },
+  "formation-ecbf": {
+    label: "Fixed-time formation + ECBF",
+    params: [
+      { key: "k1", label: "k1 (position gain)", step: 0.1, min: 0 },
+      { key: "k2", label: "k2 (velocity gain)", step: 0.1, min: 0 },
+      { key: "gamma1", label: "gamma1", step: 0.05, min: 0 },
+      { key: "gamma2", label: "gamma2", step: 0.05, min: 0 },
+      { key: "m1", label: "m1", step: 0.1, min: 0 },
+      { key: "m2", label: "m2", step: 0.1, min: 0.1 },
+      { key: "lambda1", label: "lambda1", step: 0.1, min: 0 },
+      { key: "lambda2", label: "lambda2", step: 0.1, min: 0 },
+      { key: "delta_theta", label: "delta_theta", step: 0.05, min: 0 },
+      { key: "delta2_star", label: "delta2_star", step: 0.01, min: 0 },
+      { key: "smooth_eps", label: "smooth_eps", step: 0.001, min: 0 },
+      { key: "mu_dot_filter", label: "mu_dot_filter", step: 0.05, min: 0, max: 0.99 },
+      { key: "alpha_dot_filter", label: "alpha_dot_filter", step: 0.05, min: 0, max: 0.99 },
+      { key: "desired_yaw", label: "desired_yaw (rad)", step: 0.1 },
+      { key: "gravity", label: "gravity (m/s^2)", step: 0.1, min: 0 },
+      { key: "leader_time_scale", label: "leader_time_scale", step: 0.1, min: 0 },
+      { key: "u_min_x", label: "u_min x", step: 0.1, path: ["u_min", 0] },
+      { key: "u_min_y", label: "u_min y", step: 0.1, path: ["u_min", 1] },
+      { key: "u_min_z", label: "u_min z", step: 0.1, path: ["u_min", 2] },
+      { key: "u_max_x", label: "u_max x", step: 0.1, path: ["u_max", 0] },
+      { key: "u_max_y", label: "u_max y", step: 0.1, path: ["u_max", 1] },
+      { key: "u_max_z", label: "u_max z", step: 0.1, path: ["u_max", 2] },
+    ],
+  },
+  "safe-flocking-alpha": {
+    label: "Safe flocking (alpha + CBF-QP)",
+    params: [
+      { key: "neighbor_radius", label: "Neighbor radius r (m)", step: 0.1, min: 0 },
+      { key: "desired_distance", label: "Desired distance d (m)", step: 0.1, min: 0 },
+      { key: "sigma_eps", label: "Sigma epsilon (unitless)", step: 0.01, min: 0 },
+      { key: "bump_h", label: "Bump h (0..1)", step: 0.01, min: 0, max: 0.999 },
+      { key: "phi_a", label: "Phi a (unitless)", step: 0.1, min: 0 },
+      { key: "phi_b", label: "Phi b (unitless)", step: 0.1, min: 0 },
+      { key: "alpha_weight", label: "Alpha weight", step: 0.05, min: 0 },
+      { key: "alignment_weight", label: "Alignment weight", step: 0.05, min: 0 },
+      { key: "boundary_radius", label: "Boundary radius (m)", step: 0.1, min: 0 },
+      { key: "boundary_weight", label: "Boundary weight", step: 0.05, min: 0 },
+      { key: "max_speed", label: "Max speed (m/s)", step: 0.1, min: 0 },
+      { key: "max_force", label: "Max force", step: 0.1, min: 0 },
+      { key: "speed_limit", label: "Speed limit gain (1/s)", step: 0.1, min: 0 },
+      { key: "agent_safe_distance", label: "Agent safe distance d_safe (m)", step: 0.05, min: 0 },
+      { key: "cbf_neighbor_radius", label: "CBF neighbor radius (m)", step: 0.1, min: 0 },
+      { key: "lambda1", label: "CBF lambda1", step: 0.1, min: 0 },
+      { key: "lambda2", label: "CBF lambda2", step: 0.1, min: 0 },
+      { key: "delta_theta", label: "Robust delta_theta", step: 0.05, min: 0 },
+      { key: "delta2_star", label: "Robust delta2_star", step: 0.01, min: 0, max: 0.99 },
+      { key: "smooth_eps", label: "Smooth eps", step: 0.001, min: 0 },
+      { key: "slack_weight", label: "Slack weight", step: 1, min: 0 },
+      { key: "slack_max", label: "Slack max", step: 0.5, min: 0 },
+      { key: "qp_iters", label: "QP iters", step: 1, min: 1 },
+      { key: "u_min_x", label: "u_min x", step: 0.1, path: ["u_min", 0] },
+      { key: "u_min_y", label: "u_min y", step: 0.1, path: ["u_min", 1] },
+      { key: "u_min_z", label: "u_min z", step: 0.1, path: ["u_min", 2] },
+      { key: "u_max_x", label: "u_max x", step: 0.1, path: ["u_max", 0] },
+      { key: "u_max_y", label: "u_max y", step: 0.1, path: ["u_max", 1] },
+      { key: "u_max_z", label: "u_max z", step: 0.1, path: ["u_max", 2] },
+    ],
+  },
 };
 
 const algorithmParamsState = {
   flocking: { ...flockParamDefaults },
   "flocking-alpha": { ...flockAlphaParamDefaults },
+  "formation-ecbf":
+    typeof structuredClone === "function"
+      ? structuredClone(formationEcbfParamDefaults)
+      : JSON.parse(JSON.stringify(formationEcbfParamDefaults)),
+  "safe-flocking-alpha":
+    typeof structuredClone === "function"
+      ? structuredClone(safeFlockingAlphaParamDefaults)
+      : JSON.parse(JSON.stringify(safeFlockingAlphaParamDefaults)),
 };
 
 const viewport = document.getElementById("viewport");
@@ -133,6 +335,9 @@ const playbackFileInput = document.getElementById("playback-file-input");
 const playbackTimeInput = document.getElementById("playback-time-input");
 const playbackSlider = document.getElementById("playback-slider");
 const playbackStatus = document.getElementById("playback-status");
+
+const ECBF_ALGO_ID = "formation-ecbf";
+const QUADROTOR_MODEL_ID = "quadrotor-swarm";
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(window.devicePixelRatio || 1);
@@ -217,6 +422,26 @@ scene.add(keyLight);
 
 const helpersGroup = new THREE.Group();
 scene.add(helpersGroup);
+
+const attitudeGroup = new THREE.Group();
+attitudeGroup.visible = false;
+scene.add(attitudeGroup);
+
+const leaderMarker = new THREE.Mesh(
+  new THREE.SphereGeometry(0.08, 14, 14),
+  new THREE.MeshStandardMaterial({ color: 0xff3b30, emissive: 0x330000 })
+);
+leaderMarker.visible = false;
+scene.add(leaderMarker);
+
+const leaderPathMaterial = new THREE.LineBasicMaterial({
+  color: 0xff6b6b,
+  transparent: true,
+  opacity: 0.65,
+});
+const leaderPathLine = new THREE.Line(new THREE.BufferGeometry(), leaderPathMaterial);
+leaderPathLine.visible = false;
+scene.add(leaderPathLine);
 
 function tuneGrid(grid, opacity) {
   const mats = Array.isArray(grid.material) ? grid.material : [grid.material];
@@ -392,6 +617,41 @@ function refreshAlgorithmSelect(modelId, preferredId) {
   }
 }
 
+function preferredModelForAlgorithm(algorithmId) {
+  if (algorithmId === ECBF_ALGO_ID) {
+    const hasQuad = modelCatalog.some((m) => m.id === QUADROTOR_MODEL_ID);
+    return hasQuad ? QUADROTOR_MODEL_ID : customModelId;
+  }
+  return null;
+}
+
+function handleAlgorithmChange(targetAlgo) {
+  const preferredModel = preferredModelForAlgorithm(targetAlgo);
+  const current = currentModelId();
+  if (preferredModel && current !== preferredModel) {
+    if (modelSelect) modelSelect.value = preferredModel;
+    refreshAlgorithmSelect(preferredModel, targetAlgo);
+    resetSimulation(preferredModel, targetAlgo);
+    renderAlgorithmParamsPanel();
+    return;
+  }
+
+  const targetModel = currentModelId();
+  if (activeModelId && targetModel === activeModelId && sim) {
+    try {
+      sim.set_algorithm(targetAlgo);
+      activeAlgorithmId = targetAlgo;
+      applyAlgorithmParamsToSim(targetAlgo);
+      renderAlgorithmParamsPanel();
+      return;
+    } catch (err) {
+      console.error("set_algorithm failed, recreating sim", err);
+    }
+  }
+  resetSimulation();
+  renderAlgorithmParamsPanel();
+}
+
 if (modelSelect) {
   populateSelect(modelSelect, modelCatalog, (m) => m.id, (m) => m.name);
   modelSelect.addEventListener("change", () => {
@@ -405,21 +665,8 @@ if (algorithmSelect) {
   refreshAlgorithmSelect(currentModelId());
   algorithmSelect.addEventListener("change", () => {
     if (algorithmSelectPanel) algorithmSelectPanel.value = algorithmSelect.value;
-    const targetModel = currentModelId();
     const targetAlgo = algorithmSelect.value;
-    if (activeModelId && targetModel === activeModelId && sim) {
-      try {
-        sim.set_algorithm(targetAlgo);
-        activeAlgorithmId = targetAlgo;
-        applyAlgorithmParamsToSim(targetAlgo);
-        renderAlgorithmParamsPanel();
-        return;
-      } catch (err) {
-        console.error("set_algorithm failed, recreating sim", err);
-      }
-    }
-    resetSimulation();
-    renderAlgorithmParamsPanel();
+    handleAlgorithmChange(targetAlgo);
   });
 }
 
@@ -429,7 +676,8 @@ if (algorithmSelectPanel) {
     if (algorithmSelect) {
       algorithmSelect.value = algorithmSelectPanel.value;
     }
-    renderAlgorithmParamsPanel();
+    const targetAlgo = algorithmSelectPanel.value;
+    handleAlgorithmChange(targetAlgo);
   });
 }
 
@@ -574,6 +822,7 @@ function onGizmoDoubleClick(event) {
 
 let sim = null;
 let paused = false;
+let simTime = 0;
 
 function updatePlaybackControls() {
   if (!playbackGoBtn) return;
@@ -604,6 +853,11 @@ const baseMaterial = new THREE.MeshStandardMaterial({
 });
 
 const meshes = [];
+const attitudeHelpers = [];
+
+let leaderPathSignature = "";
+let leaderPathTime = 0;
+let leaderHoldState = null;
 
 function refreshGroups() {
   currentGroups = [];
@@ -637,6 +891,8 @@ function applyGroupColorsToMeshes() {
 function rebuildMeshes() {
   meshes.forEach((mesh) => scene.remove(mesh));
   meshes.length = 0;
+  attitudeHelpers.forEach((helper) => attitudeGroup.remove(helper));
+  attitudeHelpers.length = 0;
   const count = playbackActive && playbackData ? playbackData.agentCount : (sim ? sim.len() : 0);
   refreshGroups();
   for (let i = 0; i < count; i += 1) {
@@ -647,6 +903,11 @@ function rebuildMeshes() {
     mesh.userData.index = i;
     scene.add(mesh);
     meshes.push(mesh);
+
+    const axes = new THREE.AxesHelper(0.35);
+    axes.visible = false;
+    attitudeGroup.add(axes);
+    attitudeHelpers.push(axes);
   }
 }
 
@@ -787,6 +1048,37 @@ function makeVectorField(label, vec, onChange) {
   return wrapper;
 }
 
+function makeSelectField(label, options, value, onChange) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "field";
+  const lab = document.createElement("label");
+  lab.textContent = label;
+  const select = document.createElement("select");
+  options.forEach((opt) => {
+    const option = document.createElement("option");
+    option.value = opt.value;
+    option.textContent = opt.label;
+    if (opt.value === value) option.selected = true;
+    select.append(option);
+  });
+  select.addEventListener("change", () => onChange(select.value));
+  wrapper.append(lab, select);
+  return wrapper;
+}
+
+function makeToggleField(label, checked, onChange) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "field";
+  const lab = document.createElement("label");
+  lab.textContent = label;
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.checked = !!checked;
+  input.addEventListener("change", () => onChange(input.checked));
+  wrapper.append(lab, input);
+  return wrapper;
+}
+
 function collectGroupIds() {
   const ids = new Set();
   clusters.forEach((c) => ids.add(Number(c.group || 0)));
@@ -889,6 +1181,58 @@ function normalizeFlockAlphaParams(raw) {
   return buildFlockAlphaParamsDefaults(raw, flockAlphaParamDefaults);
 }
 
+function normalizeFormationEcbfParams(raw, fallback) {
+  const base = JSON.parse(JSON.stringify(fallback || {}));
+  if (!raw || typeof raw !== "object") return base;
+  Object.entries(raw).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      base[key] = value.map((item) =>
+        Array.isArray(item) ? item.slice() : item
+      );
+      return;
+    }
+    if (value && typeof value === "object") {
+      base[key] = { ...(base[key] || {}), ...value };
+      return;
+    }
+    if (typeof value === "number" && Number.isFinite(value)) {
+      base[key] = value;
+      return;
+    }
+    if (typeof value === "boolean") {
+      base[key] = value;
+    }
+  });
+  return base;
+}
+
+function getParamValue(params, param) {
+  if (!param?.path) return params[param.key];
+  let cur = params;
+  for (const step of param.path) {
+    if (cur == null) return undefined;
+    cur = cur[step];
+  }
+  return cur;
+}
+
+function setParamValue(params, param, value) {
+  if (!param?.path) {
+    params[param.key] = value;
+    return;
+  }
+  let cur = params;
+  const last = param.path[param.path.length - 1];
+  for (let i = 0; i < param.path.length - 1; i += 1) {
+    const key = param.path[i];
+    if (cur[key] == null) {
+      cur[key] = typeof param.path[i + 1] === "number" ? [] : {};
+    }
+    cur = cur[key];
+  }
+  cur[last] = value;
+}
+
 function ensureAlgorithmParams(algorithmId) {
   if (!algorithmId) return {};
   if (!algorithmParamsState[algorithmId]) {
@@ -896,6 +1240,16 @@ function ensureAlgorithmParams(algorithmId) {
       algorithmParamsState[algorithmId] = { ...flockParamDefaults };
     } else if (algorithmId === "flocking-alpha") {
       algorithmParamsState[algorithmId] = { ...flockAlphaParamDefaults };
+    } else if (algorithmId === "formation-ecbf") {
+      algorithmParamsState[algorithmId] =
+        typeof structuredClone === "function"
+          ? structuredClone(formationEcbfParamDefaults)
+          : JSON.parse(JSON.stringify(formationEcbfParamDefaults));
+    } else if (algorithmId === "safe-flocking-alpha") {
+      algorithmParamsState[algorithmId] =
+        typeof structuredClone === "function"
+          ? structuredClone(safeFlockingAlphaParamDefaults)
+          : JSON.parse(JSON.stringify(safeFlockingAlphaParamDefaults));
     } else {
       algorithmParamsState[algorithmId] = {};
     }
@@ -921,6 +1275,16 @@ function loadAlgorithmParamsConfig(raw) {
       algorithmParamsState[algoId] = normalizeFlockParams(params);
     } else if (algoId === "flocking-alpha") {
       algorithmParamsState[algoId] = normalizeFlockAlphaParams(params);
+    } else if (algoId === "formation-ecbf") {
+      algorithmParamsState[algoId] = normalizeFormationEcbfParams(
+        params,
+        formationEcbfParamDefaults
+      );
+    } else if (algoId === "safe-flocking-alpha") {
+      algorithmParamsState[algoId] = normalizeFormationEcbfParams(
+        params,
+        safeFlockingAlphaParamDefaults
+      );
     } else {
       algorithmParamsState[algoId] = { ...params };
     }
@@ -947,6 +1311,26 @@ function applyAlgorithmParamsToSim(algorithmId, simOverride) {
     } catch (err) {
       console.error("set_flock_alpha_params failed", err);
     }
+  } else if (
+    algorithmId === "formation-ecbf" &&
+    typeof targetSim.set_formation_ecbf_params === "function"
+  ) {
+    const params = ensureAlgorithmParams(algorithmId);
+    try {
+      targetSim.set_formation_ecbf_params(params);
+    } catch (err) {
+      console.error("set_formation_ecbf_params failed", err);
+    }
+  } else if (
+    algorithmId === "safe-flocking-alpha" &&
+    typeof targetSim.set_safe_flocking_alpha_params === "function"
+  ) {
+    const params = ensureAlgorithmParams(algorithmId);
+    try {
+      targetSim.set_safe_flocking_alpha_params(params);
+    } catch (err) {
+      console.error("set_safe_flocking_alpha_params failed", err);
+    }
   }
 }
 
@@ -964,21 +1348,137 @@ function renderAlgorithmParamsPanel() {
   }
   if (algorithmParamsEmpty) algorithmParamsEmpty.style.display = "none";
   const params = ensureAlgorithmParams(algorithmId);
+  if (algorithmId === ECBF_ALGO_ID) {
+    const leaderPanel = document.createElement("div");
+    leaderPanel.className = "params-grid";
+    const leader = params.leader && typeof params.leader === "object" ? params.leader : { kind: "paper" };
+    if (!params.leader || typeof params.leader !== "object") {
+      params.leader = leader;
+    }
+    const ensureLeaderArray = (key) => {
+      if (!Array.isArray(leader[key]) || leader[key].length !== 3) {
+        leader[key] = [0, 0, 0];
+      }
+    };
+    leaderPanel.append(
+      makeSelectField(
+        "Leader trajectory",
+        [
+          { value: "circle", label: "Circle" },
+          { value: "paper", label: "Paper (circle + climb)" },
+          { value: "static", label: "Static" },
+          { value: "poly", label: "Polynomial" },
+          { value: "custom", label: "Custom (edit code)" },
+        ],
+        leader.kind || "paper",
+        (v) => {
+          leader.kind = v;
+          if (v === "circle") {
+            ensureLeaderArray("center");
+            if (!Number.isFinite(leader.radius)) leader.radius = 6;
+            if (!Number.isFinite(leader.omega)) leader.omega = 0.2;
+          }
+          if (v === "static") ensureLeaderArray("position");
+          if (v === "poly") {
+            ensureLeaderArray("a2");
+            ensureLeaderArray("a1");
+            ensureLeaderArray("a0");
+          }
+          applyAlgorithmParamsToSim(algorithmId);
+          renderAlgorithmParamsPanel();
+        }
+      ),
+      makeToggleField("Leader paused", params.leader_paused, (v) => {
+        params.leader_paused = v;
+        applyAlgorithmParamsToSim(algorithmId);
+      })
+    );
+
+    if (leader.kind === "static") {
+      ensureLeaderArray("position");
+      const posPanel = document.createElement("div");
+      posPanel.className = "params-grid";
+      ["x", "y", "z"].forEach((axis, idx) => {
+        posPanel.append(
+          makeNumberField(`Leader ${axis}`, leader.position[idx], (v) => {
+            leader.position[idx] = Number.isFinite(v) ? v : leader.position[idx];
+            applyAlgorithmParamsToSim(algorithmId);
+          }, { step: 0.1 })
+        );
+      });
+      algorithmParamsPanel.append(leaderPanel, posPanel);
+    } else if (leader.kind === "circle") {
+      ensureLeaderArray("center");
+      const circlePanel = document.createElement("div");
+      circlePanel.className = "params-grid";
+      circlePanel.append(
+        makeNumberField("Circle radius", leader.radius ?? 6, (v) => {
+          leader.radius = Number.isFinite(v) ? v : leader.radius;
+          applyAlgorithmParamsToSim(algorithmId);
+        }, { step: 0.1, min: 0 })
+      );
+      algorithmParamsPanel.append(leaderPanel, circlePanel);
+    } else if (leader.kind === "poly") {
+      ensureLeaderArray("a2");
+      ensureLeaderArray("a1");
+      ensureLeaderArray("a0");
+      const polyPanel = document.createElement("div");
+      polyPanel.className = "params-grid";
+      const labels = ["x", "y", "z"];
+      ["a0", "a1", "a2"].forEach((coeff) => {
+        labels.forEach((axis, idx) => {
+          polyPanel.append(
+            makeNumberField(`Leader ${coeff}.${axis}`, leader[coeff][idx], (v) => {
+              leader[coeff][idx] = Number.isFinite(v) ? v : leader[coeff][idx];
+              applyAlgorithmParamsToSim(algorithmId);
+            }, { step: 0.01 })
+          );
+        });
+      });
+      algorithmParamsPanel.append(leaderPanel, polyPanel);
+    } else {
+      algorithmParamsPanel.append(leaderPanel);
+    }
+  }
+  if (algorithmId === "safe-flocking-alpha") {
+    const toggles = document.createElement("div");
+    toggles.className = "params-grid";
+    toggles.append(
+      makeToggleField("Use obstacle CBF", params.use_obstacles, (v) => {
+        params.use_obstacles = v;
+        applyAlgorithmParamsToSim(algorithmId);
+      }),
+      makeToggleField("Use inter-agent CBF", params.use_agent_cbf, (v) => {
+        params.use_agent_cbf = v;
+        applyAlgorithmParamsToSim(algorithmId);
+      }),
+      makeToggleField("Use moving obstacle terms", params.use_moving_obstacle_terms, (v) => {
+        params.use_moving_obstacle_terms = v;
+        applyAlgorithmParamsToSim(algorithmId);
+      }),
+      makeToggleField("2-pass safety filter", params.two_pass, (v) => {
+        params.two_pass = v;
+        applyAlgorithmParamsToSim(algorithmId);
+      })
+    );
+    algorithmParamsPanel.append(toggles);
+  }
   const grid = document.createElement("div");
   grid.className = "params-grid";
   definition.params.forEach((param) => {
-    const value = coerceNumber(params[param.key], 0);
+    const value = coerceNumber(getParamValue(params, param), 0);
     const field = makeNumberField(
       param.label,
       value,
       (v) => {
-        const next = Number.isFinite(v) ? v : params[param.key];
-        params[param.key] = next;
+        const current = getParamValue(params, param);
+        const next = Number.isFinite(v) ? v : current;
+        setParamValue(params, param, next);
         if (activeAlgorithmId === algorithmId) {
           applyAlgorithmParamsToSim(algorithmId);
         }
       },
-      { step: param.step, min: param.min }
+      { step: param.step, min: param.min, max: param.max }
     );
     grid.append(field);
   });
@@ -998,6 +1498,10 @@ function buildRecordMeta(options) {
     opts.algorithmIdOverride ||
     activeAlgorithmId ||
     currentAlgorithmId(modelId);
+  const fields =
+    algorithmId === "safe-flocking-alpha"
+      ? RECORD_FIELDS_SAFE_FLOCKING
+      : RECORD_FIELDS_BASE;
   const plane2d =
     opts.plane2dOverride ??
     (panelPlane2dToggle?.checked ?? plane2dToggle?.checked ?? false);
@@ -1023,7 +1527,7 @@ function buildRecordMeta(options) {
     algorithmId,
     plane2d,
     agentCount: simRef ? simRef.len() : 0,
-    fields: defaultStateFields,
+    fields,
     groupColors: groupColorObj,
   };
   if (Object.keys(algorithmParamsSnapshot).length > 0) {
@@ -1659,8 +2163,13 @@ function captureFrame(force = false) {
   if (!recording || !sim) return;
   const stride = recordMeta?.stride || readRecordStride();
   if (!force && recordStep % stride !== 0) return;
-  if (typeof sim.states !== "function") return;
-  const states = sim.states();
+  const algoId = recordMeta?.algorithmId || activeAlgorithmId || currentAlgorithmId(activeModelId || currentModelId());
+  const useDebug = algoId === "safe-flocking-alpha" && typeof sim.debug_states === "function";
+  const getter = useDebug
+    ? sim.debug_states.bind(sim)
+    : (typeof sim.states === "function" ? sim.states.bind(sim) : null);
+  if (!getter) return;
+  const states = getter();
   const frame =
     states instanceof Float32Array ? states : Float32Array.from(states);
   recordFrames.push(frame);
@@ -1729,13 +2238,19 @@ function fastExportRecording() {
 
   const exportSim = buildSimForExport(targetModel, targetAlgo, plane2dDesired);
   if (!exportSim) return;
+  const useDebug =
+    targetAlgo === "safe-flocking-alpha" &&
+    typeof exportSim.debug_states === "function";
+  const getFrame = useDebug
+    ? exportSim.debug_states.bind(exportSim)
+    : exportSim.states.bind(exportSim);
   const dt = typeof exportSim.dt === "function" ? exportSim.dt() : 0;
   const totalSteps = dt > 0 ? Math.ceil(targetTime / dt) : 0;
 
   setFastExportState(true);
   try {
     const frames = [];
-    const initialStates = exportSim.states();
+    const initialStates = getFrame();
     frames.push(
       initialStates instanceof Float32Array ? initialStates : Float32Array.from(initialStates)
     );
@@ -1743,7 +2258,7 @@ function fastExportRecording() {
       for (let step = 1; step <= totalSteps; step += 1) {
         exportSim.tick();
         if (step % stride === 0) {
-          const states = exportSim.states();
+          const states = getFrame();
           frames.push(states instanceof Float32Array ? states : Float32Array.from(states));
           if (maxFrames > 0 && frames.length >= maxFrames) {
             break;
@@ -1950,6 +2465,8 @@ function resetSimulation(modelId, algorithmId) {
   if (!sim) return;
   activeModelId = actualModel;
   activeAlgorithmId = actualAlgo;
+  simTime = 0;
+  leaderHoldState = null;
   if (plane2dToggle) {
     sim.set_plane_2d(plane2dToggle.checked);
   }
@@ -2513,6 +3030,170 @@ function renderGizmo() {
   gizmoRenderer.render(gizmoScene, gizmoCamera);
 }
 
+function updateAttitudeHelpers() {
+  const show =
+    !playbackActive &&
+    sim &&
+    activeAlgorithmId === ECBF_ALGO_ID &&
+    typeof sim.attitudes === "function";
+  attitudeGroup.visible = !!show;
+  if (!show) return;
+  const data = sim.attitudes();
+  const count = Math.min(attitudeHelpers.length, Math.floor(data.length / 3));
+  for (let i = 0; i < count; i += 1) {
+    const base = i * 3;
+    const phi = data[base + 0] || 0;
+    const theta = data[base + 1] || 0;
+    const psi = data[base + 2] || 0;
+    const helper = attitudeHelpers[i];
+    helper.visible = true;
+    helper.position.copy(meshes[i].position);
+    helper.rotation.set(phi, theta, psi, "XYZ");
+  }
+  for (let i = count; i < attitudeHelpers.length; i += 1) {
+    attitudeHelpers[i].visible = false;
+  }
+}
+
+function leaderStateAt(leader, t) {
+  if (!leader || typeof leader !== "object") return null;
+  const kind = leader.kind || "paper";
+  if (kind === "static") {
+    const pos = leader.position || [0, 0, 0];
+    return { pos: new THREE.Vector3(pos[0], pos[1], pos[2]) };
+  }
+  if (kind === "circle") {
+    const center = leader.center || [0, 0, 0];
+    const radius = Number(leader.radius ?? 6);
+    const omega = Number(leader.omega ?? 0.2);
+    const angle = omega * t;
+    return {
+      pos: new THREE.Vector3(
+        center[0] + radius * Math.cos(angle),
+        center[1] + radius * Math.sin(angle),
+        center[2] ?? 0
+      ),
+    };
+  }
+  if (kind === "poly") {
+    const a2 = leader.a2 || [0, 0, 0];
+    const a1 = leader.a1 || [0, 0, 0];
+    const a0 = leader.a0 || [0, 0, 0];
+    return {
+      pos: new THREE.Vector3(
+        a2[0] * t * t + a1[0] * t + a0[0],
+        a2[1] * t * t + a1[1] * t + a0[1],
+        a2[2] * t * t + a1[2] * t + a0[2]
+      ),
+    };
+  }
+  if (kind === "paper") {
+    const omega = -0.06;
+    const phase = Math.PI;
+    const angle = omega * t + phase;
+    return {
+      pos: new THREE.Vector3(
+        60 + 25 * Math.cos(angle),
+        60 + 25 * Math.sin(angle),
+        0.5 * t
+      ),
+    };
+  }
+  return null;
+}
+
+function buildLeaderPath(leader, t) {
+  const kind = leader?.kind || "paper";
+  const points = [];
+  if (kind === "static") return points;
+  if (kind === "circle") {
+    const center = leader.center || [0, 0, 0];
+    const radius = Number(leader.radius ?? 6);
+    const segments = 120;
+    for (let i = 0; i <= segments; i += 1) {
+      const angle = (i / segments) * Math.PI * 2;
+      points.push(
+        new THREE.Vector3(
+          center[0] + radius * Math.cos(angle),
+          center[1] + radius * Math.sin(angle),
+          center[2] ?? 0
+        )
+      );
+    }
+    return points;
+  }
+  const span = kind === "paper" ? 50 : 30;
+  const steps = 160;
+  const t0 = t - span * 0.5;
+  const dt = span / steps;
+  for (let i = 0; i <= steps; i += 1) {
+    const ti = t0 + dt * i;
+    const state = leaderStateAt(leader, ti);
+    if (state?.pos) points.push(state.pos);
+  }
+  return points;
+}
+
+function updateLeaderVisual() {
+  const show =
+    !playbackActive &&
+    sim &&
+    activeAlgorithmId === ECBF_ALGO_ID &&
+    typeof sim.positions === "function";
+  leaderMarker.visible = !!show;
+  leaderPathLine.visible = !!show;
+  if (!show) {
+    leaderHoldState = null;
+    return;
+  }
+  const params = ensureAlgorithmParams(ECBF_ALGO_ID);
+  const leader = params.leader || { kind: "paper" };
+  const timeScale = Number(params.leader_time_scale ?? 1) || 1;
+  const paused = !!params.leader_paused;
+  const t = simTime * timeScale;
+  let state = leaderStateAt(leader, t);
+  if (paused) {
+    if (!leaderHoldState) leaderHoldState = state;
+    state = leaderHoldState;
+  } else {
+    leaderHoldState = null;
+  }
+  if (!state?.pos) {
+    leaderMarker.visible = false;
+    leaderPathLine.visible = false;
+    return;
+  }
+  leaderMarker.position.copy(state.pos);
+
+  const signature = JSON.stringify({
+    kind: leader.kind,
+    center: leader.center,
+    radius: leader.radius,
+    omega: leader.omega,
+    a0: leader.a0,
+    a1: leader.a1,
+    a2: leader.a2,
+    position: leader.position,
+  });
+  const timeVarying = leader.kind === "paper" || leader.kind === "poly";
+  const rebuild =
+    signature !== leaderPathSignature ||
+    (!paused && timeVarying && Math.abs(simTime - leaderPathTime) > 1.5);
+  if (rebuild) {
+    const points = buildLeaderPath(leader, t);
+    if (points.length > 0) {
+      const geometry = new THREE.BufferGeometry().setFromPoints(points);
+      leaderPathLine.geometry.dispose();
+      leaderPathLine.geometry = geometry;
+      leaderPathLine.visible = true;
+    } else {
+      leaderPathLine.visible = false;
+    }
+    leaderPathSignature = signature;
+    leaderPathTime = simTime;
+  }
+}
+
 function animate() {
   if (!sim && !playbackActive) {
     requestAnimationFrame(animate);
@@ -2535,6 +3216,8 @@ function animate() {
       advancePlaybackFrame();
     } else if (sim) {
       sim.tick();
+      const step = typeof sim.dt === "function" ? sim.dt() : currentDt();
+      if (Number.isFinite(step)) simTime += step;
       if (recording) {
         recordStep += 1;
         captureFrame();
@@ -2569,6 +3252,8 @@ function animate() {
       );
     }
   }
+  updateAttitudeHelpers();
+  updateLeaderVisual();
 
   renderer.getSize(gizmoViewportSize);
   const width = gizmoViewportSize.x;

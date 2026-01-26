@@ -3,6 +3,7 @@ use nalgebra::Vector3;
 use std::f64::consts::PI;
 
 pub const DEMO_COUNT: usize = 20;
+pub const DEMO_QUAD_COUNT: usize = 4;
 pub const DEMO_DT: f64 = 1.0 / 60.0;
 pub const DEMO_DRAG: f64 = 0.08;
 
@@ -28,6 +29,8 @@ impl ParticleModel {
 
     pub fn dt(&self) -> f64 { self.sim.dt() }
 
+    pub fn time(&self) -> f64 { self.sim.time() }
+
     pub fn set_dt(&mut self, dt: f64) { self.sim.set_dt(dt); }
 
     pub fn positions(&self) -> &[Vector3<f64>] { self.sim.positions() }
@@ -39,6 +42,10 @@ impl ParticleModel {
     pub fn set_velocity(&mut self, i: usize, vel: Vector3<f64>) { self.sim.set_velocity(i, vel); }
 
     pub fn groups(&self) -> &[usize] { self.sim.groups() }
+
+    pub fn masses(&self) -> &[f64] { self.sim.masses() }
+
+    pub fn drags(&self) -> &[f64] { self.sim.drags() }
 
     pub fn set_force(&mut self, i: usize, f: Vector3<f64>) { self.sim.set_force(i, f); }
 
@@ -154,6 +161,27 @@ pub fn lattice_demo_configs(side: usize) -> Vec<BodyConfig> {
                 });
             }
         }
+    }
+    configs
+}
+
+/// Quadrotor formation demo (4 agents).
+pub fn quadrotor_demo_configs() -> Vec<BodyConfig> {
+    let offsets = [
+        [-3.0, 3.0, 0.0],
+        [-3.0, -3.0, 0.0],
+        [3.0, 3.0, 0.0],
+        [3.0, -3.0, 0.0],
+    ];
+    let mut configs = Vec::with_capacity(DEMO_QUAD_COUNT);
+    for (i, offset) in offsets.iter().enumerate() {
+        configs.push(BodyConfig {
+            mass: 1.0,
+            state: [offset[0], offset[1], offset[2], 0.0, 0.0, 0.0],
+            drag_coefficient: 0.2,
+            trajectory_write: false,
+            group: i,
+        });
     }
     configs
 }

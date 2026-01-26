@@ -2,6 +2,8 @@
 
 use crate::algorithms::flocking::FlockParams;
 use crate::algorithms::flocking_alpha::FlockAlphaParams;
+use crate::algorithms::formation_ecbf::FormationEcbfParams;
+use crate::algorithms::safe_flocking_alpha::SafeFlockAlphaParams;
 use crate::engine::{
     algorithm_catalog, model_catalog, AlgorithmInfo, Engine, ModelInfo, ALGO_FLOCKING, MODEL_RING,
 };
@@ -45,6 +47,18 @@ pub fn flocking_defaults() -> JsValue {
 #[wasm_bindgen]
 pub fn flocking_alpha_defaults() -> JsValue {
     let params = FlockAlphaParams::default();
+    serde_wasm_bindgen::to_value(&params).unwrap_or(JsValue::NULL)
+}
+
+#[wasm_bindgen]
+pub fn formation_ecbf_defaults() -> JsValue {
+    let params = FormationEcbfParams::default();
+    serde_wasm_bindgen::to_value(&params).unwrap_or(JsValue::NULL)
+}
+
+#[wasm_bindgen]
+pub fn safe_flocking_alpha_defaults() -> JsValue {
+    let params = SafeFlockAlphaParams::default();
     serde_wasm_bindgen::to_value(&params).unwrap_or(JsValue::NULL)
 }
 
@@ -157,8 +171,11 @@ impl WasmSim {
         vy: f64,
         vz: f64,
     ) {
-        self.engine.set_position(index, Vector3::new(px, py, pz));
-        self.engine.set_velocity(index, Vector3::new(vx, vy, vz));
+        let pos = Vector3::new(px, py, pz);
+        let vel = Vector3::new(vx, vy, vz);
+        self.engine.set_position(index, pos);
+        self.engine.set_velocity(index, vel);
+        self.engine.reset_agent(index, pos, vel);
     }
 
     pub fn set_uniform_force(&mut self, fx: f64, fy: f64, fz: f64) {
@@ -181,9 +198,27 @@ impl WasmSim {
             .map_err(|e| JsValue::from_str(&e))
     }
 
+    pub fn set_formation_ecbf_params(&mut self, params: JsValue) -> Result<(), JsValue> {
+        let params: FormationEcbfParams = serde_wasm_bindgen::from_value(params)
+            .map_err(|e| JsValue::from_str(&format!("invalid formation-ecbf params: {}", e)))?;
+        self.engine
+            .set_formation_ecbf_params(params)
+            .map_err(|e| JsValue::from_str(&e))
+    }
+
+    pub fn set_safe_flocking_alpha_params(&mut self, params: JsValue) -> Result<(), JsValue> {
+        let params: SafeFlockAlphaParams = serde_wasm_bindgen::from_value(params)
+            .map_err(|e| JsValue::from_str(&format!("invalid safe-flocking-alpha params: {}", e)))?;
+        self.engine
+            .set_safe_flocking_alpha_params(params)
+            .map_err(|e| JsValue::from_str(&e))
+    }
+
     pub fn positions(&self) -> Vec<f32> { self.engine.positions_flat() }
 
     pub fn states(&self) -> Vec<f32> { self.engine.state_matrix_flat() }
+
+    pub fn debug_states(&self) -> Vec<f32> { self.engine.debug_states_flat() }
 
     pub fn dt(&self) -> f64 { self.engine.dt() }
 
@@ -194,6 +229,8 @@ impl WasmSim {
     }
 
     pub fn groups(&self) -> Vec<u32> { self.engine.groups() }
+
+    pub fn attitudes(&self) -> Vec<f32> { self.engine.attitudes_flat() }
 }
 
 #[derive(Debug, Deserialize)]
