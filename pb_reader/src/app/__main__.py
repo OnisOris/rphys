@@ -25,6 +25,10 @@ FLOCK_PARAM_FALLBACKS = {
     "neighbor_radius": 2.6,
     "separation_radius": 0.9,
 }
+FLOCK_ALPHA_PARAM_FALLBACKS = {
+    "neighbor_radius": 2.6,
+    "desired_distance": 1.4,
+}
 
 
 @dataclass
@@ -370,15 +374,31 @@ def resolve_metric_params(
             f"использую {neighbor_radius}",
             file=sys.stderr,
         )
+    if neighbor_radius is None and recording.meta.algorithm_id == "flocking-alpha":
+        neighbor_radius = FLOCK_ALPHA_PARAM_FALLBACKS.get("neighbor_radius")
+        print(
+            "Предупреждение: neighbor_radius не найден, "
+            f"использую {neighbor_radius}",
+            file=sys.stderr,
+        )
     if neighbor_radius is None or neighbor_radius <= 0:
         raise ProtoError("neighbor_radius не задан или <= 0")
 
+    if desired_distance is None:
+        desired_distance = meta_params.get("desired_distance")
     if desired_distance is None:
         desired_distance = meta_params.get("separation_radius")
     if desired_distance is None:
         desired_distance = meta_params.get("neighbor_radius")
     if desired_distance is None and recording.meta.algorithm_id == "flocking":
         desired_distance = FLOCK_PARAM_FALLBACKS.get("separation_radius")
+        print(
+            "Предупреждение: desired_distance не найден, "
+            f"использую {desired_distance}",
+            file=sys.stderr,
+        )
+    if desired_distance is None and recording.meta.algorithm_id == "flocking-alpha":
+        desired_distance = FLOCK_ALPHA_PARAM_FALLBACKS.get("desired_distance")
         print(
             "Предупреждение: desired_distance не найден, "
             f"использую {desired_distance}",

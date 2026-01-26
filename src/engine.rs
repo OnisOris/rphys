@@ -1,4 +1,5 @@
 use crate::algorithms::flocking::{FlockParams, Flocking};
+use crate::algorithms::flocking_alpha::{FlockAlphaParams, FlockingAlpha};
 use crate::models::particles::{lattice_demo_configs, ring_demo_configs, ParticleModel, DEMO_COUNT, DEMO_DT};
 use crate::BodyConfig;
 use nalgebra::Vector3;
@@ -9,6 +10,7 @@ pub const MODEL_FROM_STATES: &str = "from-states";
 
 pub const ALGO_NONE: &str = "none";
 pub const ALGO_FLOCKING: &str = "flocking";
+pub const ALGO_FLOCKING_ALPHA: &str = "flocking-alpha";
 
 pub struct ModelInfo {
     pub id: &'static str,
@@ -61,6 +63,12 @@ pub fn algorithm_catalog() -> &'static [AlgorithmInfo] {
             description: "Cucker–Smale style flocking field with cohesion/alignment/separation.",
             compatible_models: &[MODEL_RING, MODEL_LATTICE, MODEL_FROM_STATES],
         },
+        AlgorithmInfo {
+            id: ALGO_FLOCKING_ALPHA,
+            name: "Flocking alpha-lattice",
+            description: "Alpha-lattice shaping + velocity consensus (Olfati-Saber style).",
+            compatible_models: &[MODEL_RING, MODEL_LATTICE, MODEL_FROM_STATES],
+        },
     ]
 }
 
@@ -71,6 +79,7 @@ enum ModelKind {
 enum AlgorithmKind {
     None,
     Flocking(Flocking),
+    FlockingAlpha(FlockingAlpha),
 }
 
 pub struct Engine {
@@ -152,6 +161,16 @@ impl Engine {
     pub fn tick(&mut self) {
         match (&mut self.model, &mut self.algorithm) {
             (ModelKind::Particles(model), AlgorithmKind::Flocking(algo)) => {
+                if self.plane_2d {
+                    model.flatten_to_plane();
+                }
+                algo.apply(model, self.plane_2d);
+                model.step();
+                if self.plane_2d {
+                    model.flatten_to_plane();
+                }
+            }
+            (ModelKind::Particles(model), AlgorithmKind::FlockingAlpha(algo)) => {
                 if self.plane_2d {
                     model.flatten_to_plane();
                 }
@@ -276,6 +295,16 @@ impl Engine {
             _ => Err("current algorithm does not support flocking params".to_string()),
         }
     }
+
+    pub fn set_flock_alpha_params(&mut self, params: FlockAlphaParams) -> Result<(), String> {
+        match &mut self.algorithm {
+            AlgorithmKind::FlockingAlpha(algo) => {
+                algo.params = params;
+                Ok(())
+            }
+            _ => Err("current algorithm does not support flocking-alpha params".to_string()),
+        }
+    }
 }
 
 fn normalize_model_id(id: &str) -> Option<&'static str> {
@@ -291,6 +320,7 @@ fn normalize_algorithm_id(id: &str) -> Option<&'static str> {
     match id {
         ALGO_NONE => Some(ALGO_NONE),
         ALGO_FLOCKING => Some(ALGO_FLOCKING),
+        ALGO_FLOCKING_ALPHA => Some(ALGO_FLOCKING_ALPHA),
         _ => None,
     }
 }
@@ -309,6 +339,9 @@ fn build_algorithm(id: &'static str, model_id: &'static str) -> Result<Algorithm
     match id {
         ALGO_NONE => Ok(AlgorithmKind::None),
         ALGO_FLOCKING => Ok(AlgorithmKind::Flocking(Flocking::new(FlockParams::default()))),
+        ALGO_FLOCKING_ALPHA => Ok(AlgorithmKind::FlockingAlpha(FlockingAlpha::new(
+            FlockAlphaParams::default(),
+        ))),
         _ => Err(format!("unknown algorithm id '{}'", id)),
     }
 }

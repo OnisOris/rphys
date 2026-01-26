@@ -1,6 +1,7 @@
 #![cfg(target_arch = "wasm32")]
 
 use crate::algorithms::flocking::FlockParams;
+use crate::algorithms::flocking_alpha::FlockAlphaParams;
 use crate::engine::{
     algorithm_catalog, model_catalog, AlgorithmInfo, Engine, ModelInfo, ALGO_FLOCKING, MODEL_RING,
 };
@@ -38,6 +39,12 @@ pub fn algorithms_for_model(model_id: &str) -> js_sys::Array {
 #[wasm_bindgen]
 pub fn flocking_defaults() -> JsValue {
     let params = FlockParams::default();
+    serde_wasm_bindgen::to_value(&params).unwrap_or(JsValue::NULL)
+}
+
+#[wasm_bindgen]
+pub fn flocking_alpha_defaults() -> JsValue {
+    let params = FlockAlphaParams::default();
     serde_wasm_bindgen::to_value(&params).unwrap_or(JsValue::NULL)
 }
 
@@ -163,6 +170,14 @@ impl WasmSim {
             .map_err(|e| JsValue::from_str(&format!("invalid flock params: {}", e)))?;
         self.engine
             .set_flock_params(params)
+            .map_err(|e| JsValue::from_str(&e))
+    }
+
+    pub fn set_flock_alpha_params(&mut self, params: JsValue) -> Result<(), JsValue> {
+        let params: FlockAlphaParams = serde_wasm_bindgen::from_value(params)
+            .map_err(|e| JsValue::from_str(&format!("invalid flock-alpha params: {}", e)))?;
+        self.engine
+            .set_flock_alpha_params(params)
             .map_err(|e| JsValue::from_str(&e))
     }
 

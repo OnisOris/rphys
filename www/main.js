@@ -1,13 +1,12 @@
 import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
-import init, {
-  WasmSim,
-  available_models,
-  available_algorithms,
-  algorithms_for_model,
-  flocking_defaults,
-} from "./pkg/rphys.js";
+import init, * as rphysWasm from "./pkg/rphys.js";
 
 await init();
+
+const { WasmSim, available_models, available_algorithms, algorithms_for_model } =
+  rphysWasm;
+const flocking_defaults = rphysWasm.flocking_defaults;
+const flocking_alpha_defaults = rphysWasm.flocking_alpha_defaults;
 
 const defaultStateFields = ["x", "y", "z", "vx", "vy", "vz"];
 const fallbackFlockParams = {
@@ -30,6 +29,29 @@ const flockParamDefaults = buildFlockParamsDefaults(
   fallbackFlockParams
 );
 
+const fallbackFlockAlphaParams = {
+  neighbor_radius: 2.6,
+  desired_distance: 1.4,
+  sigma_eps: 0.1,
+  bump_h: 0.2,
+  phi_a: 5.0,
+  phi_b: 5.0,
+  alpha_weight: 1.0,
+  alignment_weight: 0.65,
+  boundary_radius: 6.0,
+  boundary_weight: 0.8,
+  max_speed: 2.4,
+  max_force: 1.6,
+  speed_limit: 2.0,
+};
+
+const rawFlockAlphaDefaults =
+  typeof flocking_alpha_defaults === "function" ? flocking_alpha_defaults() : null;
+const flockAlphaParamDefaults = buildFlockAlphaParamsDefaults(
+  rawFlockAlphaDefaults,
+  fallbackFlockAlphaParams
+);
+
 const algorithmParamDefinitions = {
   flocking: {
     label: "Flocking",
@@ -46,10 +68,29 @@ const algorithmParamDefinitions = {
       { key: "speed_limit", label: "Speed limit gain (1/s)", step: 0.1, min: 0 },
     ],
   },
+  "flocking-alpha": {
+    label: "Flocking alpha-lattice",
+    params: [
+      { key: "neighbor_radius", label: "Neighbor radius r (m)", step: 0.1, min: 0 },
+      { key: "desired_distance", label: "Desired distance d (m)", step: 0.1, min: 0 },
+      { key: "sigma_eps", label: "Sigma epsilon (unitless)", step: 0.01, min: 0 },
+      { key: "bump_h", label: "Bump h (0..1)", step: 0.01, min: 0 },
+      { key: "phi_a", label: "Phi a (unitless)", step: 0.1, min: 0 },
+      { key: "phi_b", label: "Phi b (unitless)", step: 0.1, min: 0 },
+      { key: "alpha_weight", label: "Alpha weight (unitless)", step: 0.05, min: 0 },
+      { key: "alignment_weight", label: "Alignment weight (unitless)", step: 0.05, min: 0 },
+      { key: "boundary_radius", label: "Boundary radius (m)", step: 0.1, min: 0 },
+      { key: "boundary_weight", label: "Boundary weight (unitless)", step: 0.05, min: 0 },
+      { key: "max_speed", label: "Max speed (m/s)", step: 0.1, min: 0 },
+      { key: "max_force", label: "Max force (N)", step: 0.1, min: 0 },
+      { key: "speed_limit", label: "Speed limit gain (1/s)", step: 0.1, min: 0 },
+    ],
+  },
 };
 
 const algorithmParamsState = {
   flocking: { ...flockParamDefaults },
+  "flocking-alpha": { ...flockAlphaParamDefaults },
 };
 
 const viewport = document.getElementById("viewport");
@@ -826,11 +867,35 @@ function normalizeFlockParams(raw) {
   return buildFlockParamsDefaults(raw, flockParamDefaults);
 }
 
+function buildFlockAlphaParamsDefaults(raw, fallback) {
+  return {
+    neighbor_radius: coerceNumber(raw?.neighbor_radius, fallback.neighbor_radius),
+    desired_distance: coerceNumber(raw?.desired_distance, fallback.desired_distance),
+    sigma_eps: coerceNumber(raw?.sigma_eps, fallback.sigma_eps),
+    bump_h: coerceNumber(raw?.bump_h, fallback.bump_h),
+    phi_a: coerceNumber(raw?.phi_a, fallback.phi_a),
+    phi_b: coerceNumber(raw?.phi_b, fallback.phi_b),
+    alpha_weight: coerceNumber(raw?.alpha_weight, fallback.alpha_weight),
+    alignment_weight: coerceNumber(raw?.alignment_weight, fallback.alignment_weight),
+    boundary_radius: coerceNumber(raw?.boundary_radius, fallback.boundary_radius),
+    boundary_weight: coerceNumber(raw?.boundary_weight, fallback.boundary_weight),
+    max_speed: coerceNumber(raw?.max_speed, fallback.max_speed),
+    max_force: coerceNumber(raw?.max_force, fallback.max_force),
+    speed_limit: coerceNumber(raw?.speed_limit, fallback.speed_limit),
+  };
+}
+
+function normalizeFlockAlphaParams(raw) {
+  return buildFlockAlphaParamsDefaults(raw, flockAlphaParamDefaults);
+}
+
 function ensureAlgorithmParams(algorithmId) {
   if (!algorithmId) return {};
   if (!algorithmParamsState[algorithmId]) {
     if (algorithmId === "flocking") {
       algorithmParamsState[algorithmId] = { ...flockParamDefaults };
+    } else if (algorithmId === "flocking-alpha") {
+      algorithmParamsState[algorithmId] = { ...flockAlphaParamDefaults };
     } else {
       algorithmParamsState[algorithmId] = {};
     }
@@ -854,6 +919,8 @@ function loadAlgorithmParamsConfig(raw) {
     if (!params || typeof params !== "object") return;
     if (algoId === "flocking") {
       algorithmParamsState[algoId] = normalizeFlockParams(params);
+    } else if (algoId === "flocking-alpha") {
+      algorithmParamsState[algoId] = normalizeFlockAlphaParams(params);
     } else {
       algorithmParamsState[algoId] = { ...params };
     }
@@ -869,6 +936,16 @@ function applyAlgorithmParamsToSim(algorithmId, simOverride) {
       targetSim.set_flock_params(params);
     } catch (err) {
       console.error("set_flock_params failed", err);
+    }
+  } else if (
+    algorithmId === "flocking-alpha" &&
+    typeof targetSim.set_flock_alpha_params === "function"
+  ) {
+    const params = ensureAlgorithmParams(algorithmId);
+    try {
+      targetSim.set_flock_alpha_params(params);
+    } catch (err) {
+      console.error("set_flock_alpha_params failed", err);
     }
   }
 }
